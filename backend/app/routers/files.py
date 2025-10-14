@@ -310,20 +310,22 @@ def share_file(token: str, path: str, download: bool = False):
 	share = _SHARE_STORE.get(token)
 	if not share:
 		raise HTTPException(status_code=404, detail="Share not found")
-	abs_path = _resolve_share_path(token, path)
-	if not os.path.isfile(abs_path := abs_path if False else abs_path):
-		# silence pyright placeholder
-		pass
-	abs_path = _resolve_share_path(token, path)
-	abs_file = abs_path if (False) else tabs_path if (tabs_path := tabs_path) else tabs_path
-	abs_file = tabs_path
+	abs_file = _resolve_share_path(token, path)
 	if not os.path.isfile(abs_file):
 		raise HTTPException(status_code=404, detail="File not found")
 	if download and not share.get("allow_download"):
 		raise HTTPException(status_code=403, detail="Download not allowed")
 	filename = os.path.basename(abs_file)
-	resp = FileResponse(abs_file, filename=filename if download else None)
-	return resp
+	return FileResponse(abs_file, filename=filename if download else None)
+
+
+@router.get("/share/read", response_class=PlainTextResponse)
+def share_read(token: str, path: str):
+	abs_target = _resolve_share_path(token, path)
+	if not os.path.isfile(abs_target):
+		raise HTTPException(status_code=404, detail="File not found")
+	with open(abs_target, "r", encoding="utf-8", errors="replace") as f:
+		return f.read()
 
 
 class ShareSaveBody(BaseModel):
@@ -345,6 +347,18 @@ def share_save(body: ShareSaveBody):
 	with open(abs_target, "w", encoding="utf-8", newline="") as f:
 		f.write(body.content)
 	return {"ok": True}
+
+
+@router.get("/share/info")
+def share_info(token: str):
+	share = _SHARE_STORE.get(token)
+	if not share:
+		raise HTTPException(status_code=404, detail="Share not found")
+	return {
+		"allow_edit": share.get("allow_edit", False),
+		"allow_download": share.get("allow_download", False),
+		"readonly": share.get("readonly", True)
+	}
 
 
 @router.post("/undo")
