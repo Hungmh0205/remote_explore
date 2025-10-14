@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Remote File Explorer</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, Noto Sans; margin: 0; }
+      .app { padding: 12px; }
+      .topbar { display: flex; align-items: center; gap: 16px; }
+      .pathbar { display: flex; gap: 8px; flex: 1; }
+      input { width: 100%; padding: 6px 8px; }
+      .toolbar { display: flex; gap: 8px; margin: 8px 0; }
+      .listing { border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; text-align: left; }
+      .folder, .file { cursor: default; }
+      .folder { font-weight: 600; }
+      button { padding: 6px 10px; cursor: pointer; }
+      label.upload input { display: none; }
+      label.upload span { display: inline-block; padding: 6px 10px; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; cursor: pointer; }
+    </style>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/axios@1.7.7/dist/axios.min.js"></script>
+  </head>
+  <body>
+    <div id="app" class="app">
+      <header class="topbar">
+        <h1 style="margin:0">Remote File Explorer</h1>
+        <div class="pathbar">
+          <input v-model="currentPath" @keyup.enter="navigate(currentPath)" placeholder="Nhập đường dẫn (ví dụ C:\\ hoặc D:\\projects)" />
+          <button @click="navigate(currentPath)">Go</button>
+        </div>
+      </header>
+      <section class="toolbar">
+        <button @click="goUp">Up</button>
+        <button @click="promptMkdir">New Folder</button>
+        <label class="upload">
+          <input type="file" @change="onUpload" />
+          <span>Upload</span>
+        </label>
+      </section>
+      <section class="listing">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Size</th>
+              <th>Modified</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="e in entries" :key="e.path">
+              <td>
+                <span v-if="e.is_dir" class="folder" @dblclick="openDir(e)">📁 {{ e.name }}</span>
+                <span v-else class="file">📄 {{ e.name }}</span>
+              </td>
+              <td>{{ e.is_dir ? '' : formatSize(e.size) }}</td>
+              <td>{{ formatTime(e.modified) }}</td>
+              <td>
+                <button v-if="!e.is_dir" @click="downloadFile(e)">Download</button>
+                <button @click="promptRename(e)">Rename</button>
+                <button @click="deletePath(e)">Delete</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
+    <script>
+      const { createApp, ref, onMounted } = Vue
+      createApp({
+        setup() {
+          const currentPath = ref('C:\\')
+          const entries = ref([])
+
+          async function load(path) {
+            const res = await axios.get('/api/list', { params: { path } })
+            entries.value = res.data
+            currentPath.value = path
+          }
+          function navigate(path) { load(path) }
+          function goUp() {
+            const p = currentPath.value.replace(/\\+$/,'')
+            const idx = p.lastIndexOf('\\')
+            if (idx > 2) load(p.slice(0, idx)); else load(p.slice(0, 3))
+          }
+          function openDir(e) { if (e.is_dir) load(e.path) }
+          async function downloadFile(e) {
+            const url = `/api/file?path=${encodeURIComponent(e.path)}`
+            const a = document.createElement('a')
+            a.href = url; a.download = e.name; a.click()
+          }
+          async function onUpload(ev) {
+            const input = ev.target
+            if (!input.files || input.files.length === 0) return
+            const file = input.files[0]
+            const form = new FormData()
+            form.append('file', file)
+            await axios.post('/api/upload', form, { params: { dest: currentPath.value } })
+            await load(currentPath.value)
+            input.value = ''
+          }
+          async function promptMkdir() {
+            const name = window.prompt('Folder name')
+            if (!name) return
+            await axios.post('/api/mkdir', { path: join(currentPath.value, name) })
+            await load(currentPath.value)
+          }
+          async function promptRename(e) {
+            const newName = window.prompt('New name', e.name)
+            if (!newName || newName === e.name) return
+            await axios.post('/api/rename', { path: e.path, new_name: newName })
+            await load(currentPath.value)
+          }
+          async function deletePath(e) {
+            if (!window.confirm(`Delete ${e.name}?`)) return
+            await axios.post('/api/delete', { path: e.path })
+            await load(currentPath.value)
+          }
+          function join(a, b) { return a.endsWith('\\') ? a + b : a + '\\' + b }
+          function formatSize(bytes) {
+            const thresh = 1024; if (Math.abs(bytes) < thresh) return bytes + ' B'
+            const units = ['KB','MB','GB','TB','PB']; let u = -1
+            do { bytes /= thresh; u++ } while (Math.abs(bytes) >= thresh && u < units.length - 1)
+            return bytes.toFixed(1) + ' ' + units[u]
+          }
+          function formatTime(epoch) { return new Date(epoch * 1000).toLocaleString() }
+          onMounted(() => load(currentPath.value))
+          return { currentPath, entries, navigate, goUp, openDir, downloadFile, onUpload, promptMkdir, promptRename, deletePath, formatSize, formatTime }
+        }
+      }).mount('#app')
+    </script>
+  </body>
+  </html>
+
+
