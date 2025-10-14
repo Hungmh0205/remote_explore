@@ -7,6 +7,17 @@
     <style>
       body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, Noto Sans; margin: 0; }
       .app { padding: 12px; }
+      .layout { display: flex; gap: 12px; }
+      .sidebar { width: 240px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px; align-self: flex-start; min-height: 60vh; }
+      .sidebar.dragover { outline: 2px dashed #6366f1; }
+      .sidebar-head { font-weight: 700; margin-bottom: 8px; }
+      .pins { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+      .pin-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px; border-radius: 4px; }
+      .pin-item:hover { background: #f8fafc; }
+      .pin-name { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .unpin { border: 1px solid #e5e7eb; background: #fff; border-radius: 4px; width: 20px; height: 20px; line-height: 18px; text-align: center; padding: 0; cursor: pointer; }
+      .sidebar-hint { color: #6b7280; font-size: 12px; margin-top: 8px; }
+      .content { flex: 1; }
       .topbar { display: flex; align-items: center; gap: 16px; }
       .pathbar { display: flex; gap: 8px; flex: 1; }
       input { width: 100%; padding: 6px 8px; }
@@ -19,6 +30,19 @@
       button { padding: 6px 10px; cursor: pointer; }
       label.upload input { display: none; }
       label.upload span { display: inline-block; padding: 6px 10px; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; cursor: pointer; }
+      tr.selected { background: #eef2ff; }
+      tr.drop-target { outline: 2px dashed #6366f1; }
+      .context-menu { position: absolute; background: #fff; border: 1px solid #e5e7eb; box-shadow: 0 10px 30px rgba(0,0,0,0.08); border-radius: 6px; min-width: 180px; padding: 6px 0; z-index: 1000; }
+      .menu-item { padding: 6px 12px; cursor: pointer; }
+      .menu-item:hover { background: #f8fafc; }
+      .menu-item.danger { color: #b91c1c; }
+      .menu-sep { height: 1px; background: #e5e7eb; margin: 6px 0; }
+      details { padding: 0 6px; }
+      .menu-sub { padding-left: 10px; }
+      .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+      .modal-card { width: 80vw; max-width: 900px; height: 70vh; background: #fff; border-radius: 8px; display: flex; flex-direction: column; }
+      .modal-head { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: space-between; }
+      .modal-card textarea { flex: 1; width: 100%; border: none; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 13px; }
     </style>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://unpkg.com/axios@1.7.7/dist/axios.min.js"></script>
@@ -32,15 +56,35 @@
           <button @click="navigate(currentPath)">Go</button>
         </div>
       </header>
+      <div class="layout">
+        <aside class="sidebar" @dragover.prevent="onSidebarDragOver" @dragleave="onSidebarDragLeave" @drop="onSidebarDrop">
+          <div class="sidebar-head">This PC</div>
+          <ul class="pins">
+            <li v-for="d in drives" :key="d" class="pin-item">
+              <span class="pin-name" @click="navigate(d)">💽 {{ displayName(d) }}</span>
+            </li>
+          </ul>
+          <div class="sidebar-head" style="margin-top:8px">Quick Access</div>
+          <ul class="pins">
+            <li v-for="p in pins" :key="p" class="pin-item">
+              <span class="pin-name" @click="navigate(p)">📌 {{ displayName(p) }}</span>
+              <button class="unpin" @click="unpin(p)">×</button>
+            </li>
+          </ul>
+          <div class="sidebar-hint">Kéo thư mục vào đây để Pin</div>
+        </aside>
+        <main class="content">
       <section class="toolbar">
         <button @click="goUp">Up</button>
-        <button @click="promptMkdir">New Folder</button>
+        <button @click="promptNew">New ▾</button>
         <label class="upload">
           <input type="file" @change="onUpload" />
           <span>Upload</span>
         </label>
+        <button v-if="clipboard.item" @click="pasteHere">Paste</button>
+        <button v-if="undoToken" @click="undo">Undo</button>
       </section>
-      <section class="listing">
+      <section class="listing" @contextmenu.prevent="openBlankMenu($event)">
         <table>
           <thead>
             <tr>
@@ -51,34 +95,132 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="e in entries" :key="e.path">
+            <tr v-for="(e, idx) in entries" :key="e.path"
+                :class="{ selected: isSelected(e) }"
+                @click="onRowClick($event, e, idx)"
+                @contextmenu.prevent="openContextMenu($event, e)"
+                draggable="true"
+                @dragstart="onDragStart($event, e)"
+                @dragend="onDragEnd"
+                @dragover.prevent="e.is_dir && onDragOver($event)"
+                @dragleave="e.is_dir && onDragLeave($event)"
+                @drop="e.is_dir && onDrop($event, e)">
               <td>
                 <span v-if="e.is_dir" class="folder" @dblclick="openDir(e)">📁 {{ e.name }}</span>
                 <span v-else class="file">📄 {{ e.name }}</span>
               </td>
               <td>{{ e.is_dir ? '' : formatSize(e.size) }}</td>
               <td>{{ formatTime(e.modified) }}</td>
-              <td>
-                <button v-if="!e.is_dir" @click="downloadFile(e)">Download</button>
-                <button @click="promptRename(e)">Rename</button>
-                <button @click="deletePath(e)">Delete</button>
-              </td>
+              <td></td>
             </tr>
           </tbody>
         </table>
       </section>
+        </main>
+      </div>
+      <div v-if="menu.visible" class="context-menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }" @click.stop>
+        <template v-if="menu.item">
+          <div class="menu-item" @click="cmOpen(menu.item)">Open</div>
+          <div class="menu-item" v-if="isTextFile(menu.item)" @click="cmEdit(menu.item)">Edit</div>
+          <div class="menu-item" @click="cmCopy(menu.item)">Copy</div>
+          <div class="menu-item" @click="cmCut(menu.item)">Cut</div>
+          <div class="menu-item" v-if="!menu.item?.is_dir" @click="cmDownload(menu.item)">Download</div>
+          <div class="menu-item" v-if="menu.item?.is_dir" @click="cmZipDownload(menu.item)">Download (ZIP)</div>
+          <div class="menu-item" @click="openShare(menu.item)">Share</div>
+          <div class="menu-item" @click="cmRename(menu.item)">Rename</div>
+          <div class="menu-item danger" @click="cmDelete(menu.item)">Delete</div>
+          <div class="menu-sep"></div>
+        </template>
+        <details open>
+          <summary>New</summary>
+          <div class="menu-sub">
+            <div class="menu-item" @click="createFolder">Folder</div>
+            <div class="menu-item" @click="createFile">File</div>
+          </div>
+        </details>
+      </div>
+      <!-- Share Modal -->
+      <div v-if="share.visible" class="modal" @click.self="closeShare">
+        <div class="modal-card" style="max-width:720px;width:80vw;height:auto;">
+          <div class="modal-head">
+            <strong>Share: {{ share.item?.name }}</strong>
+            <button @click="closeShare">Close</button>
+          </div>
+          <div style="padding:12px; display:grid; gap:12px;">
+            <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+              <label><input type="radio" value="readonly" v-model="share.access" /> Readonly</label>
+              <label><input type="radio" value="edit" v-model="share.access" /> Edit</label>
+              <label><input type="checkbox" v-model="share.allowDownload" /> Allow download</label>
+            </div>
+            <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+              <label>Expire (hours): <input type="number" min="0" step="1" v-model.number="share.expiresHours" :disabled="share.noExpiry" style="width:100px" /></label>
+              <label><input type="checkbox" v-model="share.noExpiry" /> No expiry</label>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button @click="createShareLink" :disabled="share.generating">Generate link</button>
+              <span v-if="share.generating">Generating...</span>
+            </div>
+            <div v-if="share.url">
+              <div style="font-size:12px; color:#6b7280; margin-bottom:4px">Share link:</div>
+              <div style="display:flex; gap:8px;">
+                <input :value="share.url" readonly style="flex:1; padding:6px 8px;" />
+                <button @click="copyShare">Copy</button>
+              </div>
+              <div v-if="share.expiresAt" style="font-size:12px; color:#6b7280; margin-top:6px">Expires at: {{ formatExpire(share.expiresAt) }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-if="editor.visible" class="modal" @click.self="closeEditor">
+        <div class="modal-card">
+          <div class="modal-head">
+            <strong>{{ editor.name }}</strong>
+            <div style="display:flex; gap:8px; align-items:center">
+              <label><input type="checkbox" v-model="editor.editable" /> Edit</label>
+              <button @click="closeEditor">Close</button>
+              <button v-if="editor.editable" @click="saveEditor">Save</button>
+            </div>
+          </div>
+          <textarea v-model="editor.content" :readonly="!editor.editable"></textarea>
+        </div>
+      </div>
     </div>
     <script>
-      const { createApp, ref, onMounted } = Vue
+      const { createApp, ref, onMounted, reactive } = Vue
       createApp({
         setup() {
           const currentPath = ref('C:\\')
           const entries = ref([])
+          const menu = reactive({ visible: false, x: 0, y: 0, item: null })
+          const clipboard = reactive({ item: null, mode: null })
+          const editor = reactive({ visible: false, path: '', name: '', content: '', editable: false })
+          const selected = reactive(new Set())
+          let lastClickedIndex = -1
+          const dragging = reactive({ active: false, items: [] })
+          const undoToken = ref('')
+          const pins = ref(loadPins())
+          const drives = ref([])
+          const share = reactive({ visible: false, item: null, access: 'readonly', allowDownload: true, noExpiry: true, expiresHours: 24, url: '', generating: false, expiresAt: null })
+          const sidebarEl = ref(null)
 
           async function load(path) {
             const res = await axios.get('/api/list', { params: { path } })
             entries.value = res.data
             currentPath.value = path
+            try { localStorage.setItem('rfe:lastPath', path) } catch {}
+          }
+          function displayName(p) { return p }
+          function loadPins() { try { return JSON.parse(localStorage.getItem('rfe:pins')||'[]') } catch { return [] } }
+          function savePins() { localStorage.setItem('rfe:pins', JSON.stringify(pins.value)) }
+          function pin(path) { if (!pins.value.includes(path)) { pins.value.unshift(path); savePins() } }
+          function unpin(path) { pins.value = pins.value.filter(x => x !== path); savePins() }
+          function onSidebarDragOver(ev) { ev.currentTarget.classList.add('dragover') }
+          function onSidebarDragLeave(ev) { ev.currentTarget.classList.remove('dragover') }
+          function onSidebarDrop(ev) {
+            ev.currentTarget.classList.remove('dragover')
+            // Prefer first selected folder; fallback to currentPath
+            const folder = entries.value.find(e => selected.has(e.path) && e.is_dir)
+            if (folder) pin(folder.path)
           }
           function navigate(path) { load(path) }
           function goUp() {
@@ -102,11 +244,11 @@
             await load(currentPath.value)
             input.value = ''
           }
-          async function promptMkdir() {
-            const name = window.prompt('Folder name')
-            if (!name) return
-            await axios.post('/api/mkdir', { path: join(currentPath.value, name) })
-            await load(currentPath.value)
+          async function promptNew() {
+            const type = window.prompt('Create (folder/file)?', 'folder')
+            if (!type) return
+            if (type.toLowerCase() === 'folder') return createFolder()
+            if (type.toLowerCase() === 'file') return createFile()
           }
           async function promptRename(e) {
             const newName = window.prompt('New name', e.name)
@@ -119,6 +261,154 @@
             await axios.post('/api/delete', { path: e.path })
             await load(currentPath.value)
           }
+          function isSelected(e) { return selected.has(e.path) }
+          function clearSelection() { selected.clear(); lastClickedIndex = -1 }
+          function onRowClick(ev, e, idx) {
+            const isCtrl = ev.ctrlKey || ev.metaKey
+            const isShift = ev.shiftKey
+            if (isShift && lastClickedIndex >= 0) {
+              const [a, b] = idx > lastClickedIndex ? [lastClickedIndex, idx] : [idx, lastClickedIndex]
+              selected.clear()
+              for (let i = a; i <= b; i++) selected.add(entries.value[i].path)
+            } else if (isCtrl) {
+              if (selected.has(e.path)) selected.delete(e.path); else selected.add(e.path)
+              lastClickedIndex = idx
+            } else {
+              selected.clear(); selected.add(e.path); lastClickedIndex = idx
+            }
+          }
+          function onDragStart(ev, e) {
+            // if the dragged item isn't selected, select it first
+            if (!selected.has(e.path)) { selected.clear(); selected.add(e.path) }
+            dragging.active = true
+            dragging.items = Array.from(selected)
+            ev.dataTransfer.effectAllowed = 'move'
+          }
+          function onDragEnd() { dragging.active = false; dragging.items = [] }
+          function onDragOver(ev) { ev.currentTarget.classList.add('drop-target') }
+          function onDragLeave(ev) { ev.currentTarget.classList.remove('drop-target') }
+          async function onDrop(ev, folder) {
+            ev.currentTarget.classList.remove('drop-target')
+            if (!folder || !folder.is_dir) return
+            const destination = folder.path
+            for (const src of dragging.items) {
+              if (samePath(src, destination) || isChildOf(destination, src)) continue
+              const res = await axios.post('/api/move', { source: src, destination })
+              if (res.data?.undo_token) undoToken.value = res.data.undo_token
+            }
+            await load(currentPath.value)
+          }
+          async function undo() {
+            if (!undoToken.value) return
+            await axios.post('/api/undo', { token: undoToken.value })
+            undoToken.value = ''
+            await load(currentPath.value)
+          }
+          function samePath(a, b) { return normalize(a) === normalize(b) }
+          function isChildOf(child, parent) { const A = normalize(child); const B = normalize(parent); return A.startsWith(B + '\\') }
+          function normalize(p) { return p.replace(/\\+/g,'\\').replace(/\\$/,'').toLowerCase() }
+          function openContextMenu(ev, item) {
+            menu.visible = true; menu.x = ev.pageX; menu.y = ev.pageY; menu.item = item
+            document.addEventListener('click', () => { menu.visible = false }, { once: true })
+          }
+          function openBlankMenu(ev) {
+            // Only trigger when clicking whitespace, not on row (row handler stops propagation)
+            if (ev.target.closest('tr')) return
+            menu.visible = true; menu.x = ev.pageX; menu.y = ev.pageY; menu.item = null
+            document.addEventListener('click', () => { menu.visible = false }, { once: true })
+          }
+          function isTextFile(item) {
+            if (!item || item.is_dir) return false
+            const exts = ['.txt','.md','.log','.json','.xml','.csv','.ini','.conf','.yaml','.yml','.py','.js','.ts','.java','.c','.cpp','.cs','.go','.rb','.php','.bat','.ps1']
+            const name = item.name.toLowerCase()
+            return exts.some(e => name.endsWith(e))
+          }
+          function cmOpen(item) {
+            if (!item) return
+            if (!item.is_dir) {
+              window.open(`/api/open?path=${encodeURIComponent(item.path)}`, '_blank')
+            } else {
+              openDir(item)
+            }
+          }
+          async function cmEdit(item) {
+            if (!item || item.is_dir) return
+            const res = await axios.get('/api/read', { params: { path: item.path }, responseType: 'text' })
+            editor.visible = true; editor.path = item.path; editor.name = item.name; editor.content = res.data; editor.editable = false
+          }
+          function cmCopy(item) { clipboard.item = item; clipboard.mode = 'copy' }
+          function cmCut(item) { clipboard.item = item; clipboard.mode = 'cut' }
+          async function pasteHere() {
+            if (!clipboard.item || !clipboard.mode) return
+            const target = currentPath.value
+            try {
+              if (clipboard.mode === 'copy') {
+                await axios.post('/api/copy', { source: clipboard.item.path, destination: target })
+              } else {
+                const res = await axios.post('/api/move', { source: clipboard.item.path, destination: target })
+                if (res.data?.undo_token) undoToken.value = res.data.undo_token
+              }
+            } finally {
+              clipboard.item = null; clipboard.mode = null
+            }
+            await load(currentPath.value)
+          }
+          function cmDownload(item) {
+            if (!item || item.is_dir) return
+            const a = document.createElement('a')
+            a.href = `/api/file?path=${encodeURIComponent(item.path)}`
+            a.download = item.name
+            a.click()
+          }
+          function cmZipDownload(item) {
+            if (!item || !item.is_dir) return
+            const a = document.createElement('a')
+            a.href = `/api/zip?path=${encodeURIComponent(item.path)}`
+            a.download = item.name + '.zip'
+            a.click()
+          }
+          function openShare(item) { share.visible = true; share.item = item; share.url = ''; share.expiresAt = null }
+          function closeShare() { share.visible = false }
+          async function createShareLink() {
+            if (!share.item) return
+            share.generating = true
+            try {
+              const body = {
+                path: share.item.path,
+                readonly: share.access === 'readonly',
+                allow_edit: share.access === 'edit',
+                allow_download: !!share.allowDownload,
+                expires_hours: share.noExpiry ? null : (share.expiresHours || null),
+              }
+              const res = await axios.post('/api/share/create', body)
+              share.url = res.data?.url || ''
+              share.expiresAt = res.data?.expires_at || null
+            } finally {
+              share.generating = false
+            }
+          }
+          async function copyShare() {
+            try { await navigator.clipboard.writeText(share.url) } catch {}
+          }
+          async function cmRename(item) { await promptRename(item) }
+          async function cmDelete(item) { await deletePath(item) }
+          async function createFolder() {
+            const name = window.prompt('Folder name')
+            if (!name) return
+            await axios.post('/api/mkdir', { path: join(currentPath.value, name) })
+            await load(currentPath.value)
+          }
+          async function createFile() {
+            const name = window.prompt('File name')
+            if (!name) return
+            await axios.post('/api/save', { path: join(currentPath.value, name), content: '' })
+            await load(currentPath.value)
+          }
+          async function saveEditor() {
+            await axios.post('/api/save', { path: editor.path, content: editor.content })
+            editor.editable = false
+          }
+          function closeEditor() { editor.visible = false }
           function join(a, b) { return a.endsWith('\\') ? a + b : a + '\\' + b }
           function formatSize(bytes) {
             const thresh = 1024; if (Math.abs(bytes) < thresh) return bytes + ' B'
@@ -127,8 +417,20 @@
             return bytes.toFixed(1) + ' ' + units[u]
           }
           function formatTime(epoch) { return new Date(epoch * 1000).toLocaleString() }
-          onMounted(() => load(currentPath.value))
-          return { currentPath, entries, navigate, goUp, openDir, downloadFile, onUpload, promptMkdir, promptRename, deletePath, formatSize, formatTime }
+          function formatExpire(ts) { try { return new Date(ts * 1000).toLocaleString() } catch { return '' } }
+          onMounted(async () => {
+            let initial = currentPath.value
+            try {
+              const saved = localStorage.getItem('rfe:lastPath')
+              if (saved) initial = saved
+            } catch {}
+            await load(initial)
+            try {
+              const res = await axios.get('/api/roots')
+              if (Array.isArray(res.data)) drives.value = res.data
+            } catch {}
+          })
+          return { currentPath, entries, navigate, goUp, openDir, downloadFile, onUpload, promptNew, promptRename, deletePath, formatSize, formatTime, openContextMenu, openBlankMenu, menu, cmOpen, cmEdit, cmCopy, cmCut, cmDownload, cmZipDownload, cmRename, cmDelete, clipboard, pasteHere, createFolder, createFile, editor, saveEditor, closeEditor, isTextFile, isSelected, onRowClick, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, undoToken, undo, pins, drives, displayName, unpin, onSidebarDragOver, onSidebarDragLeave, onSidebarDrop, share, openShare, closeShare, createShareLink, copyShare, formatExpire }
         }
       }).mount('#app')
     </script>
