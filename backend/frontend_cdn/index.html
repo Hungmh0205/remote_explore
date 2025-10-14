@@ -7,8 +7,8 @@
     <style>
       body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, Noto Sans; margin: 0; }
       .app { padding: 12px; }
-      .layout { display: flex; gap: 12px; }
-      .sidebar { width: 240px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px; align-self: flex-start; min-height: 60vh; }
+      .sidebar { position: fixed; top: 0; left: 0; width: 240px; height: 100vh; background: #f8fafc; border-right: 1px solid #e2e8f0; padding: 12px; overflow-y: auto; z-index: 100; }
+      .app { padding-left: 264px; }
       .sidebar.dragover { outline: 2px dashed #6366f1; }
       .sidebar-head { font-weight: 700; margin-bottom: 8px; }
       .pins { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -27,7 +27,7 @@
       th, td { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; text-align: left; }
       .folder, .file { cursor: default; }
       .folder { font-weight: 600; }
-      button { padding: 6px 10px; cursor: pointer; }
+      button { padding: 6px 10px; cursor: pointer; margin: 4px; }
       label.upload input { display: none; }
       label.upload span { display: inline-block; padding: 6px 10px; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; cursor: pointer; }
       tr.selected { background: #eef2ff; }
@@ -75,13 +75,14 @@
         </aside>
         <main class="content">
       <section class="toolbar">
-        <button @click="goUp">Up</button>
+        <button @click="goUp">Back</button>
         <button @click="promptNew">New ▾</button>
         <label class="upload">
           <input type="file" @change="onUpload" />
           <span>Upload</span>
         </label>
         <button v-if="clipboard.item" @click="pasteHere">Paste</button>
+        <button v-if="selected.size > 0" @click="downloadSelected">Download Selected ({{ selected.size }})</button>
         <button v-if="undoToken" @click="undo">Undo</button>
       </section>
       <section class="listing" @contextmenu.prevent="openBlankMenu($event)">
@@ -91,7 +92,6 @@
               <th>Name</th>
               <th>Size</th>
               <th>Modified</th>
-              <th>Action</th>
             </tr>
           </thead>
           <tbody>
@@ -233,6 +233,38 @@
             const url = `/api/file?path=${encodeURIComponent(e.path)}`
             const a = document.createElement('a')
             a.href = url; a.download = e.name; a.click()
+          }
+          async function downloadSelected() {
+            if (selected.size === 0) return
+            const selectedItems = Array.from(selected).map(path => entries.value.find(e => e.path === path)).filter(Boolean)
+            if (selectedItems.length === 0) return
+            
+            // If only one item selected, download directly
+            if (selectedItems.length === 1) {
+              const item = selectedItems[0]
+              if (item.is_dir) {
+                // Download folder as ZIP
+                const url = `/api/zip?path=${encodeURIComponent(item.path)}`
+                const a = document.createElement('a')
+                a.href = url; a.download = `${item.name}.zip`; a.click()
+              } else {
+                // Download single file
+                downloadFile(item)
+              }
+              return
+            }
+            
+            // Multiple items selected - create a temporary ZIP
+            try {
+              const paths = selectedItems.map(item => item.path)
+              const response = await axios.post('/api/zip/multiple', { paths }, { responseType: 'blob' })
+              const url = window.URL.createObjectURL(new Blob([response.data]))
+              const a = document.createElement('a')
+              a.href = url; a.download = 'selected_files.zip'; a.click()
+              window.URL.revokeObjectURL(url)
+            } catch (err) {
+              alert('Failed to download selected files: ' + (err.response?.data?.detail || err.message))
+            }
           }
           async function onUpload(ev) {
             const input = ev.target
@@ -430,7 +462,7 @@
               if (Array.isArray(res.data)) drives.value = res.data
             } catch {}
           })
-          return { currentPath, entries, navigate, goUp, openDir, downloadFile, onUpload, promptNew, promptRename, deletePath, formatSize, formatTime, openContextMenu, openBlankMenu, menu, cmOpen, cmEdit, cmCopy, cmCut, cmDownload, cmZipDownload, cmRename, cmDelete, clipboard, pasteHere, createFolder, createFile, editor, saveEditor, closeEditor, isTextFile, isSelected, onRowClick, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, undoToken, undo, pins, drives, displayName, unpin, onSidebarDragOver, onSidebarDragLeave, onSidebarDrop, share, openShare, closeShare, createShareLink, copyShare, formatExpire }
+          return { currentPath, entries, navigate, goUp, openDir, downloadFile, downloadSelected, onUpload, promptNew, promptRename, deletePath, formatSize, formatTime, openContextMenu, openBlankMenu, menu, cmOpen, cmEdit, cmCopy, cmCut, cmDownload, cmZipDownload, cmRename, cmDelete, clipboard, pasteHere, createFolder, createFile, editor, saveEditor, closeEditor, isTextFile, isSelected, onRowClick, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, undoToken, undo, pins, drives, displayName, unpin, onSidebarDragOver, onSidebarDragLeave, onSidebarDrop, share, openShare, closeShare, createShareLink, copyShare, formatExpire, selected }
         }
       }).mount('#app')
     </script>

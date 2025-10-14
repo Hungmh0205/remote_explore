@@ -126,6 +126,48 @@ def download_zip(path: str):
 	return FileResponse(zip_path, filename=f"{basename}.zip")
 
 
+class MultipleZipBody(BaseModel):
+	paths: List[str]
+
+
+@router.post("/zip/multiple")
+def download_multiple_zip(body: MultipleZipBody):
+	"""Zip multiple files/folders and stream as ZIP download."""
+	if not body.paths:
+		raise HTTPException(status_code=400, detail="No paths provided")
+	
+	# Validate all paths
+	valid_paths = []
+	for path in body.paths:
+		allowed, abs_path = resolve_path(path)
+		if not allowed:
+			raise HTTPException(status_code=403, detail=f"Path not allowed: {path}")
+		if not os.path.exists(abs_path):
+			raise HTTPException(status_code=404, detail=f"Path not found: {path}")
+		valid_paths.append(abs_path)
+	
+	# Create temp zip
+	tmp_dir = tempfile.mkdtemp(prefix="rfe_")
+	zip_path = os.path.join(tmp_dir, "selected_files.zip")
+	
+	with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+		for abs_path in valid_paths:
+			basename = os.path.basename(abs_path.rstrip("/\\"))
+			if os.path.isdir(abs_path):
+				# Add folder contents
+				for root, dirs, files in os.walk(abs_path):
+					for fname in files:
+						full = os.path.join(root, fname)
+						rel = os.path.relpath(full, start=abs_path)
+						arcname = f"{basename}/{rel}"
+						zf.write(full, arcname=arcname)
+			else:
+				# Add single file
+				zf.write(abs_path, arcname=basename)
+	
+	return FileResponse(zip_path, filename="selected_files.zip")
+
+
 @router.post("/upload")
 async def upload_file(dest: str, file: UploadFile = File(...)):
 	allowed, abs_dest = resolve_path(dest)
@@ -359,6 +401,51 @@ def share_info(token: str):
 		"allow_download": share.get("allow_download", False),
 		"readonly": share.get("readonly", True)
 	}
+
+
+class ShareMultipleZipBody(BaseModel):
+	token: str
+	paths: List[str]
+
+
+@router.post("/share/zip/multiple")
+def share_download_multiple_zip(body: ShareMultipleZipBody):
+	"""Zip multiple files/folders from a share and stream as ZIP download."""
+	share = _SHARE_STORE.get(body.token)
+	if not share:
+		raise HTTPException(status_code=404, detail="Share not found")
+	
+	if not body.paths:
+		raise HTTPException(status_code=400, detail="No paths provided")
+	
+	# Validate all paths within share scope
+	valid_paths = []
+	for rel_path in body.paths:
+		abs_path = _resolve_share_path(body.token, rel_path)
+		if not abs_path or not os.path.exists(abs_path):
+			raise HTTPException(status_code=404, detail=f"Path not found: {rel_path}")
+		valid_paths.append(abs_path)
+	
+	# Create temp zip
+	tmp_dir = tempfile.mkdtemp(prefix="rfe_share_")
+	zip_path = os.path.join(tmp_dir, "selected_files.zip")
+	
+	with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+		for abs_path in valid_paths:
+			basename = os.path.basename(abs_path.rstrip("/\\"))
+			if os.path.isdir(abs_path):
+				# Add folder contents
+				for root, dirs, files in os.walk(abs_path):
+					for fname in files:
+						full = os.path.join(root, fname)
+						rel = os.path.relpath(full, start=abs_path)
+						arcname = f"{basename}/{rel}"
+						zf.write(full, arcname=arcname)
+			else:
+				# Add single file
+				zf.write(abs_path, arcname=basename)
+	
+	return FileResponse(zip_path, filename="selected_files.zip")
 
 
 @router.post("/undo")

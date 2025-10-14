@@ -15,6 +15,7 @@
       .listing { border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; }
       table { width: 100%; border-collapse: collapse; }
       th, td { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; text-align: left; }
+      tr.selected { background-color: #dbeafe; }
       button { padding:6px 10px; cursor:pointer; }
       .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
       .modal-card { width: 80vw; max-width: 900px; height: 70vh; background: #fff; border-radius: 8px; display: flex; flex-direction: column; }
@@ -40,6 +41,7 @@
       </div>
       <div class="toolbar">
         <button @click="goUp">Up</button>
+        <button v-if="selected.size > 0" @click="downloadSelected">Download Selected ({{ selected.size }})</button>
         <div class="hint">You can access items within this shared scope only.</div>
       </div>
       <section class="listing">
@@ -53,7 +55,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="e in entries" :key="e.path">
+            <tr v-for="e in entries" :key="e.path" :class="{ selected: isSelected(e) }" @click="onRowClick(e, $event)">
               <td>
                 <span v-if="e.is_dir" style="font-weight:600; cursor:pointer" @dblclick="openDir(e)">📁 {{ e.name }}</span>
                 <span v-else style="cursor:pointer" @dblclick="openFile(e)">📄 {{ e.name }}</span>
@@ -108,6 +110,8 @@
           const entries = ref([])
           const editor = reactive({ visible: false, path: '', name: '', content: '', type: '', url: '', readonly: true })
           const shareInfo = ref(null)
+          const selected = reactive(new Set())
+          let lastClickedIndex = -1
 
           if (!token) {
             document.body.innerHTML = '<div style="padding:20px">Missing token</div>'
@@ -209,12 +213,73 @@
             const t=1024; if (Math.abs(bytes)<t) return bytes+' B'; const u=['KB','MB','GB','TB','PB']; let i=-1; do { bytes/=t; i++ } while (Math.abs(bytes)>=t && i<u.length-1); return bytes.toFixed(1)+' '+u[i]
           }
           function formatTime(epoch) { return new Date(epoch*1000).toLocaleString() }
+          
+          function isSelected(e) { return selected.has(e.path) }
+          
+          function onRowClick(e, event) {
+            if (event.target.tagName === 'BUTTON') return
+            
+            const index = entries.value.findIndex(item => item.path === e.path)
+            const isCtrl = event.ctrlKey || event.metaKey
+            const isShift = event.shiftKey
+            
+            if (isCtrl) {
+              if (selected.has(e.path)) {
+                selected.delete(e.path)
+              } else {
+                selected.add(e.path)
+              }
+              lastClickedIndex = index
+            } else if (isShift && lastClickedIndex >= 0) {
+              const start = Math.min(lastClickedIndex, index)
+              const end = Math.max(lastClickedIndex, index)
+              selected.clear()
+              for (let i = start; i <= end; i++) {
+                selected.add(entries.value[i].path)
+              }
+            } else {
+              selected.clear()
+              selected.add(e.path)
+              lastClickedIndex = index
+            }
+          }
+          
+          async function downloadSelected() {
+            if (selected.size === 0) return
+            const selectedItems = Array.from(selected).map(path => entries.value.find(e => e.path === path)).filter(Boolean)
+            if (selectedItems.length === 0) return
+            
+            // If only one item selected, download directly
+            if (selectedItems.length === 1) {
+              const item = selectedItems[0]
+              downloadFile(item)
+              return
+            }
+            
+            // Multiple items selected - create a temporary ZIP
+            try {
+              const paths = selectedItems.map(item => {
+                const rel = (currentRel.value ? currentRel.value.replace(/[\\/]+$/,'') + '/' : '') + item.name
+                return rel
+              })
+              const response = await axios.post('/api/share/zip/multiple', { 
+                token, 
+                paths 
+              }, { responseType: 'blob' })
+              const url = window.URL.createObjectURL(new Blob([response.data]))
+              const a = document.createElement('a')
+              a.href = url; a.download = 'selected_files.zip'; a.click()
+              window.URL.revokeObjectURL(url)
+            } catch (err) {
+              alert('Failed to download selected files: ' + (err.response?.data?.detail || err.message))
+            }
+          }
 
           onMounted(async () => { 
             await loadShareInfo()
             await load('') 
           })
-          return { currentRel, entries, navigate, goUp, openDir, downloadFile, openFile, closeEditor, toggleEdit, saveFile, editor, shareInfo, formatSize, formatTime }
+          return { currentRel, entries, navigate, goUp, openDir, downloadFile, openFile, closeEditor, toggleEdit, saveFile, editor, shareInfo, formatSize, formatTime, selected, isSelected, onRowClick, downloadSelected }
         }
       }).mount('#app')
     </script>
