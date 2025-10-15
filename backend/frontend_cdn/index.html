@@ -54,6 +54,7 @@
         <div class="pathbar">
           <input v-model="currentPath" @keyup.enter="navigate(currentPath)" placeholder="Nhập đường dẫn (ví dụ C:\\ hoặc D:\\projects)" />
           <button @click="navigate(currentPath)">Go</button>
+          <a href="/admin.html" style="margin-left:8px; font-size:14px">Admin</a>
         </div>
       </header>
       <div class="layout">
@@ -198,29 +199,54 @@
           let lastClickedIndex = -1
           const dragging = reactive({ active: false, items: [] })
           const undoToken = ref('')
-          const pins = ref(loadPins())
+          const pins = ref([])
           const drives = ref([])
           const share = reactive({ visible: false, item: null, access: 'readonly', allowDownload: true, noExpiry: true, expiresHours: 24, url: '', generating: false, expiresAt: null })
           const sidebarEl = ref(null)
 
           async function load(path) {
-            const res = await axios.get('/api/list', { params: { path } })
-            entries.value = res.data
-            currentPath.value = path
-            try { localStorage.setItem('rfe:lastPath', path) } catch {}
+            try {
+              const res = await axios.get('/api/list', { params: { path } })
+              entries.value = res.data
+              currentPath.value = path
+              try { localStorage.setItem('rfe:lastPath', path) } catch {}
+            } catch (err) {
+              const msg = err?.response?.data?.detail || err?.message || 'Unknown error'
+              alert('Không thể truy cập thư mục này: ' + msg)
+            }
           }
           function displayName(p) { return p }
-          function loadPins() { try { return JSON.parse(localStorage.getItem('rfe:pins')||'[]') } catch { return [] } }
-          function savePins() { localStorage.setItem('rfe:pins', JSON.stringify(pins.value)) }
-          function pin(path) { if (!pins.value.includes(path)) { pins.value.unshift(path); savePins() } }
-          function unpin(path) { pins.value = pins.value.filter(x => x !== path); savePins() }
+          async function fetchPins() {
+            try {
+              const res = await axios.get('/api/pins')
+              if (Array.isArray(res.data)) pins.value = res.data
+            } catch (err) {
+              alert('Không thể tải danh sách pin: ' + (err.response?.data?.detail || err.message))
+            }
+          }
+          async function pin(path) {
+            try {
+              await axios.post('/api/pins', { path })
+              await fetchPins()
+            } catch (err) {
+              alert('Không thể pin: ' + (err.response?.data?.detail || err.message))
+            }
+          }
+          async function unpin(path) {
+            try {
+              await axios.delete('/api/pins', { params: { path } })
+              await fetchPins()
+            } catch (err) {
+              alert('Không thể bỏ pin: ' + (err.response?.data?.detail || err.message))
+            }
+          }
           function onSidebarDragOver(ev) { ev.currentTarget.classList.add('dragover') }
           function onSidebarDragLeave(ev) { ev.currentTarget.classList.remove('dragover') }
-          function onSidebarDrop(ev) {
+          async function onSidebarDrop(ev) {
             ev.currentTarget.classList.remove('dragover')
             // Prefer first selected folder; fallback to currentPath
             const folder = entries.value.find(e => selected.has(e.path) && e.is_dir)
-            if (folder) pin(folder.path)
+            if (folder) await pin(folder.path)
           }
           function navigate(path) { load(path) }
           function goUp() {
@@ -461,6 +487,7 @@
               const res = await axios.get('/api/roots')
               if (Array.isArray(res.data)) drives.value = res.data
             } catch {}
+            await fetchPins()
           })
           return { currentPath, entries, navigate, goUp, openDir, downloadFile, downloadSelected, onUpload, promptNew, promptRename, deletePath, formatSize, formatTime, openContextMenu, openBlankMenu, menu, cmOpen, cmEdit, cmCopy, cmCut, cmDownload, cmZipDownload, cmRename, cmDelete, clipboard, pasteHere, createFolder, createFile, editor, saveEditor, closeEditor, isTextFile, isSelected, onRowClick, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, undoToken, undo, pins, drives, displayName, unpin, onSidebarDragOver, onSidebarDragLeave, onSidebarDrop, share, openShare, closeShare, createShareLink, copyShare, formatExpire, selected }
         }

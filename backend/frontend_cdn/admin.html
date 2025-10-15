@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin - Remote File Explorer</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, Noto Sans; margin: 0; }
+      .app { padding: 16px; max-width: 1000px; margin: 0 auto; }
+      h2 { margin: 12px 0; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; text-align: left; }
+      .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0; }
+      .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background: #fff; }
+      .muted { color:#6b7280; font-size:12px; }
+      .toolbar { display:flex; gap:8px; align-items:center; margin: 8px 0; }
+      button { padding:6px 10px; cursor:pointer; }
+      a { color:#2563eb; text-decoration:none; }
+    </style>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/axios@1.7.7/dist/axios.min.js"></script>
+  </head>
+  <body>
+    <div id="app" class="app">
+      <div class="toolbar">
+        <a href="/index.html">← Back to Explorer</a>
+      </div>
+      <h2>Database Summary</h2>
+      <div class="cards">
+        <div class="card"><div>Shares</div><div style="font-size:28px; font-weight:700">{{ summary.shares }}</div></div>
+        <div class="card"><div>Pins</div><div style="font-size:28px; font-weight:700">{{ summary.pins }}</div></div>
+      </div>
+
+      <h2>Shares</h2>
+      <div class="muted">Manage existing share links.</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Token</th>
+            <th>Root</th>
+            <th>Readonly</th>
+            <th>Allow Download</th>
+            <th>Allow Edit</th>
+            <th>Expires</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="s in shares" :key="s.token">
+            <td style="font-family:ui-monospace">{{ s.token }}</td>
+            <td>{{ s.root }}</td>
+            <td>{{ s.readonly ? 'Yes' : 'No' }}</td>
+            <td>{{ s.allow_download ? 'Yes' : 'No' }}</td>
+            <td>{{ s.allow_edit ? 'Yes' : 'No' }}</td>
+            <td>{{ formatTime(s.expires_at) }}</td>
+            <td>
+              <button @click="delShare(s.token)">Delete</button>
+            </td>
+          </tr>
+          <tr v-if="shares.length === 0"><td colspan="7" class="muted">No data</td></tr>
+        </tbody>
+      </table>
+
+      <h2 style="margin-top:20px">Pins</h2>
+      <div class="muted">Pinned folders persisted in DB.</div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Path</th>
+            <th>Created</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="p in pins" :key="p.id">
+            <td>{{ p.id }}</td>
+            <td>{{ p.path }}</td>
+            <td>{{ formatTime(p.created_at) }}</td>
+            <td>
+              <button @click="delPin(p.id)">Delete</button>
+            </td>
+          </tr>
+          <tr v-if="pins.length === 0"><td colspan="4" class="muted">No data</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <script>
+      const { createApp, ref, onMounted } = Vue
+      createApp({
+        setup() {
+          const summary = ref({ shares: 0, pins: 0 })
+          const shares = ref([])
+          const pins = ref([])
+
+          async function load() {
+            const [sum, sh, ps] = await Promise.all([
+              axios.get('/api/admin/summary'),
+              axios.get('/api/admin/shares'),
+              axios.get('/api/admin/pins')
+            ])
+            summary.value = sum.data
+            shares.value = Array.isArray(sh.data) ? sh.data : []
+            pins.value = Array.isArray(ps.data) ? ps.data : []
+          }
+
+          async function delShare(token) {
+            if (!confirm('Delete this share?')) return
+            await axios.delete('/api/admin/shares', { params: { token } })
+            await load()
+          }
+
+          async function delPin(id) {
+            if (!confirm('Delete this pin?')) return
+            await axios.delete('/api/admin/pins', { params: { id } })
+            await load()
+          }
+
+          function formatTime(ts) {
+            if (!ts) return '-'
+            try { return new Date(Number(ts) * 1000).toLocaleString() } catch { return String(ts) }
+          }
+
+          onMounted(load)
+          return { summary, shares, pins, delShare, delPin, formatTime }
+        }
+      }).mount('#app')
+    </script>
+  </body>
+  </html>
+
+
+

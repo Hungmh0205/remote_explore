@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from ..path_utils import resolve_path
+from ..db import query_all, execute, query_one
 from ..config import settings
 
 
@@ -29,6 +30,33 @@ def _detect_windows_drives() -> List[str]:
 
 
 router = APIRouter()
+# ---------------- Pins Endpoints ----------------
+
+@router.get("/pins")
+def list_pins() -> List[str]:
+	rows = query_all("SELECT path FROM pins ORDER BY id DESC")
+	return [r["path"] for r in rows]
+
+
+class PinBody(BaseModel):
+	path: str
+
+
+@router.post("/pins")
+def add_pin(body: PinBody):
+	# store if not exists
+	try:
+		execute("INSERT OR IGNORE INTO pins(path, created_at) VALUES(?, strftime('%s','now'))", (body.path,))
+	except Exception:
+		pass
+	return {"ok": True}
+
+
+@router.delete("/pins")
+def remove_pin(path: str):
+	execute("DELETE FROM pins WHERE path = ?", (path,))
+	return {"ok": True}
+
 
 
 class Entry(BaseModel):
@@ -39,8 +67,7 @@ class Entry(BaseModel):
 	modified: float  # epoch seconds
 # In-memory undo store: token -> inverse operation data
 _UNDO_STORE: Dict[str, dict] = {}
-# In-memory share store: token -> {root, perms, expires_at}
-_SHARE_STORE: Dict[str, dict] = {}
+# Shares will be persisted in SQLite; keep a tiny read-through cache if needed (not required now)
 
 
 
@@ -52,21 +79,24 @@ def list_dir(path: str = Query("")):
 	if not os.path.isdir(abs_dir):
 		raise HTTPException(status_code=404, detail="Directory not found")
 	entries: List[Entry] = []
-	with os.scandir(abs_dir) as it:
-		for entry in it:
-			try:
-				stat = entry.stat(follow_symlinks=False)
-			except Exception:
-				continue
-			entries.append(
-				Entry(
-					name=entry.name,
-					path=os.path.join(abs_dir, entry.name),
-					is_dir=entry.is_dir(follow_symlinks=False),
-					size=0 if entry.is_dir(follow_symlinks=False) else int(stat.st_size),
-					modified=float(stat.st_mtime),
+	try:
+		with os.scandir(abs_dir) as it:
+			for entry in it:
+				try:
+					stat = entry.stat(follow_symlinks=False)
+				except Exception:
+					continue
+				entries.append(
+					Entry(
+						name=entry.name,
+						path=os.path.join(abs_dir, entry.name),
+						is_dir=entry.is_dir(follow_symlinks=False),
+						size=0 if entry.is_dir(follow_symlinks=False) else int(stat.st_size),
+						modified=float(stat.st_mtime),
+					)
 				)
-			)
+	except PermissionError:
+		raise HTTPException(status_code=403, detail="Access denied: insufficient permissions to read this directory")
 	return sorted(entries, key=lambda e: (not e.is_dir, e.name.lower()))
 
 
@@ -291,27 +321,32 @@ def create_share_link(body: ShareCreateBody, request: Request):
 	expires_at = None
 	if body.expires_hours is not None and body.expires_hours > 0:
 		expires_at = (datetime.utcnow().timestamp() + float(body.expires_hours) * 3600.0)
-	_SHARE_STORE[token] = {
-		"root": abs_path,
-		"readonly": bool(body.readonly),
-		"allow_download": bool(body.allow_download),
-		"allow_edit": bool(body.allow_edit),
-		"expires_at": expires_at,
-	}
+	# persist share
+	execute(
+		"INSERT INTO shares(token, root, readonly, allow_download, allow_edit, expires_at) VALUES(?,?,?,?,?,?)",
+		(
+			token,
+			abs_path,
+			1 if bool(body.readonly) else 0,
+			1 if bool(body.allow_download) else 0,
+			1 if bool(body.allow_edit) else 0,
+			expires_at,
+		),
+	)
 	base = str(request.base_url).rstrip("/")
 	share_url = f"{base}/shared.html?token={token}"
 	return {"ok": True, "token": token, "url": share_url, "expires_at": expires_at}
 
 
 def _resolve_share_path(token: str, rel_path: str) -> str:
-	share = _SHARE_STORE.get(token)
+	share = query_one("SELECT * FROM shares WHERE token = ?", (token,))
 	if not share:
 		raise HTTPException(status_code=404, detail="Share not found")
 	# expiry check
 	expires_at = share.get("expires_at")
 	if expires_at is not None and datetime.utcnow().timestamp() > float(expires_at):
 		# expire and purge
-		_SHARE_STORE.pop(token, None)
+		execute("DELETE FROM shares WHERE token = ?", (token,))
 		raise HTTPException(status_code=410, detail="Share expired")
 	base = share["root"]
 	# join and normalize; prevent traversal outside base
@@ -349,13 +384,13 @@ def share_list(token: str, path: str = ""):
 
 @router.get("/share/file")
 def share_file(token: str, path: str, download: bool = False):
-	share = _SHARE_STORE.get(token)
+	share = query_one("SELECT * FROM shares WHERE token = ?", (token,))
 	if not share:
 		raise HTTPException(status_code=404, detail="Share not found")
 	abs_file = _resolve_share_path(token, path)
 	if not os.path.isfile(abs_file):
 		raise HTTPException(status_code=404, detail="File not found")
-	if download and not share.get("allow_download"):
+	if download and not bool(share.get("allow_download")):
 		raise HTTPException(status_code=403, detail="Download not allowed")
 	filename = os.path.basename(abs_file)
 	return FileResponse(abs_file, filename=filename if download else None)
@@ -378,10 +413,10 @@ class ShareSaveBody(BaseModel):
 
 @router.post("/share/save")
 def share_save(body: ShareSaveBody):
-	share = _SHARE_STORE.get(body.token)
+	share = query_one("SELECT * FROM shares WHERE token = ?", (body.token,))
 	if not share:
 		raise HTTPException(status_code=404, detail="Share not found")
-	if not share.get("allow_edit"):
+	if not bool(share.get("allow_edit")):
 		raise HTTPException(status_code=403, detail="Edit not allowed")
 	abs_target = _resolve_share_path(body.token, body.path)
 	parent = os.path.dirname(abs_target)
@@ -393,13 +428,13 @@ def share_save(body: ShareSaveBody):
 
 @router.get("/share/info")
 def share_info(token: str):
-	share = _SHARE_STORE.get(token)
+	share = query_one("SELECT * FROM shares WHERE token = ?", (token,))
 	if not share:
 		raise HTTPException(status_code=404, detail="Share not found")
 	return {
-		"allow_edit": share.get("allow_edit", False),
-		"allow_download": share.get("allow_download", False),
-		"readonly": share.get("readonly", True)
+		"allow_edit": bool(share.get("allow_edit", 0)),
+		"allow_download": bool(share.get("allow_download", 0)),
+		"readonly": bool(share.get("readonly", 1))
 	}
 
 
@@ -411,7 +446,7 @@ class ShareMultipleZipBody(BaseModel):
 @router.post("/share/zip/multiple")
 def share_download_multiple_zip(body: ShareMultipleZipBody):
 	"""Zip multiple files/folders from a share and stream as ZIP download."""
-	share = _SHARE_STORE.get(body.token)
+	share = query_one("SELECT * FROM shares WHERE token = ?", (body.token,))
 	if not share:
 		raise HTTPException(status_code=404, detail="Share not found")
 	
