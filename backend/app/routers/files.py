@@ -13,7 +13,9 @@ from pydantic import BaseModel
 
 from ..path_utils import resolve_path
 from ..db import query_all, execute, query_one
+import hashlib
 from ..config import settings
+import stat as _stat
 
 
 def _detect_windows_drives() -> List[str]:
@@ -30,6 +32,8 @@ def _detect_windows_drives() -> List[str]:
 
 
 router = APIRouter()
+# (Search endpoint removed as per user request)
+
 # ---------------- Pins Endpoints ----------------
 
 @router.get("/pins")
@@ -303,11 +307,11 @@ def move_path(body: MoveBody):
 class UndoBody(BaseModel):
 	token: str
 class ShareCreateBody(BaseModel):
-	path: str
-	readonly: bool = True
-	allow_download: bool = True
-	allow_edit: bool = False
-	expires_hours: Optional[float] = None  # None => no expiry
+    path: str
+    readonly: bool = True
+    allow_download: bool = True
+    allow_edit: bool = False
+    expires_hours: Optional[float] = None  # None => no expiry
 
 
 @router.post("/share/create")
@@ -338,24 +342,41 @@ def create_share_link(body: ShareCreateBody, request: Request):
 	return {"ok": True, "token": token, "url": share_url, "expires_at": expires_at}
 
 
-def _resolve_share_path(token: str, rel_path: str) -> str:
+def _get_share_or_410(token: str) -> dict:
 	share = query_one("SELECT * FROM shares WHERE token = ?", (token,))
 	if not share:
 		raise HTTPException(status_code=404, detail="Share not found")
-	# expiry check
 	expires_at = share.get("expires_at")
 	if expires_at is not None and datetime.utcnow().timestamp() > float(expires_at):
-		# expire and purge
 		execute("DELETE FROM shares WHERE token = ?", (token,))
 		raise HTTPException(status_code=410, detail="Share expired")
-	base = share["root"]
-	# join and normalize; prevent traversal outside base
-	target = os.path.abspath(os.path.join(base, rel_path or "."))
-	base_norm = os.path.normpath(base)
-	target_norm = os.path.normpath(target)
-	if not target_norm.startswith(base_norm):
-		raise HTTPException(status_code=403, detail="Path outside share")
-	return target
+	return share
+
+
+def _verify_password_or_401(share: dict, supplied_password):
+	return None
+
+
+def _touch_access(token: str) -> None:
+	return None
+
+
+def _resolve_share_path(token: str, rel_path: str, password: Optional[str] = None) -> str:
+    share = _get_share_or_410(token)
+    _verify_password_or_401(share, password)
+    base = share["root"]
+    # Reject absolute rel paths to avoid base being ignored by join
+    if rel_path and os.path.isabs(rel_path):
+        raise HTTPException(status_code=403, detail="Absolute paths are not allowed in share")
+    # Use realpath to resolve symlinks where supported
+    target = os.path.realpath(os.path.join(base, rel_path or "."))
+    # Normalize for comparison: path, case (Windows), and ensure separator boundary
+    base_norm = os.path.normcase(os.path.normpath(os.path.realpath(base)))
+    target_norm = os.path.normcase(os.path.normpath(target))
+    if not (target_norm == base_norm or target_norm.startswith(base_norm + os.sep)):
+        raise HTTPException(status_code=403, detail="Path outside share")
+    _touch_access(token)
+    return target
 
 
 @router.get("/share/list", response_model=List[Entry])
@@ -384,9 +405,7 @@ def share_list(token: str, path: str = ""):
 
 @router.get("/share/file")
 def share_file(token: str, path: str, download: bool = False):
-	share = query_one("SELECT * FROM shares WHERE token = ?", (token,))
-	if not share:
-		raise HTTPException(status_code=404, detail="Share not found")
+	share = _get_share_or_410(token)
 	abs_file = _resolve_share_path(token, path)
 	if not os.path.isfile(abs_file):
 		raise HTTPException(status_code=404, detail="File not found")
@@ -432,9 +451,9 @@ def share_info(token: str):
 	if not share:
 		raise HTTPException(status_code=404, detail="Share not found")
 	return {
-		"allow_edit": bool(share.get("allow_edit", 0)),
-		"allow_download": bool(share.get("allow_download", 0)),
-		"readonly": bool(share.get("readonly", 1))
+        "allow_edit": bool(share.get("allow_edit", 0)),
+        "allow_download": bool(share.get("allow_download", 0)),
+        "readonly": bool(share.get("readonly", 1))
 	}
 
 
@@ -538,6 +557,104 @@ def read_text_file(path: str):
 	except UnicodeDecodeError:
 		raise HTTPException(status_code=415, detail="Not a text file")
 
+
+# ---------------- Metadata (Normal & Share) ----------------
+
+def _build_metadata(abs_path: str) -> dict:
+	s = os.stat(abs_path)
+	is_dir = os.path.isdir(abs_path)
+	# Writable for current user/process
+	writable = bool(s.st_mode & _stat.S_IWRITE) if os.name == 'nt' else os.access(abs_path, os.W_OK)
+	return {
+		"name": os.path.basename(abs_path.rstrip("/\\")) or abs_path,
+		"path": abs_path,
+		"is_dir": is_dir,
+		"size": 0 if is_dir else int(s.st_size),
+		"modified": float(s.st_mtime),
+		"created": float(getattr(s, 'st_ctime', s.st_mtime)),
+		"mode": int(s.st_mode),
+		"readonly": not writable,
+	}
+
+
+def _update_meta_abs(abs_path: str, modified: Optional[float], readonly: Optional[bool]) -> dict:
+	# Update modified time
+	if modified is not None:
+		try:
+			atime = os.stat(abs_path).st_atime
+			os.utime(abs_path, (float(atime), float(modified)))
+		except Exception:
+			raise HTTPException(status_code=400, detail="Failed to update modified time")
+	# Update readonly flag (best-effort)
+	if readonly is not None:
+		try:
+			mode = os.stat(abs_path).st_mode
+			if readonly:
+				# Remove write bit(s)
+				if os.name == 'nt':
+					os.chmod(abs_path, mode & ~_stat.S_IWRITE)
+				else:
+					os.chmod(abs_path, mode & ~(_stat.S_IWUSR | _stat.S_IWGRP | _stat.S_IWOTH))
+			else:
+				# Add owner write bit
+				os.chmod(abs_path, mode | _stat.S_IWUSR)
+		except Exception:
+			raise HTTPException(status_code=400, detail="Failed to update readonly flag")
+	return {"ok": True, "meta": _build_metadata(abs_path)}
+
+
+@router.get("/stat")
+def stat_path(path: str):
+	allowed, abs_path = resolve_path(path)
+	if not allowed:
+		raise HTTPException(status_code=403, detail="Path not allowed")
+	if not os.path.exists(abs_path):
+		raise HTTPException(status_code=404, detail="Path not found")
+	return _build_metadata(abs_path)
+
+
+class UpdateMetaBody(BaseModel):
+	path: str
+	modified: Optional[float] = None
+	readonly: Optional[bool] = None
+
+
+@router.post("/update_meta")
+def update_meta(body: UpdateMetaBody):
+	allowed, abs_path = resolve_path(body.path)
+	if not allowed:
+		raise HTTPException(status_code=403, detail="Path not allowed")
+	if not os.path.exists(abs_path):
+		raise HTTPException(status_code=404, detail="Path not found")
+	return _update_meta_abs(abs_path, body.modified, body.readonly)
+
+
+@router.get("/share/stat")
+def share_stat(token: str, path: str):
+	abs_path = _resolve_share_path(token, path)
+	if not os.path.exists(abs_path):
+		raise HTTPException(status_code=404, detail="Path not found")
+	return _build_metadata(abs_path)
+
+
+class ShareUpdateMetaBody(BaseModel):
+	token: str
+	path: str
+	modified: Optional[float] = None
+	readonly: Optional[bool] = None
+
+
+@router.post("/share/update_meta")
+def share_update_meta(body: ShareUpdateMetaBody):
+	share = query_one("SELECT * FROM shares WHERE token = ?", (body.token,))
+	if not share:
+		raise HTTPException(status_code=404, detail="Share not found")
+	if not bool(share.get("allow_edit")):
+		raise HTTPException(status_code=403, detail="Edit not allowed")
+	abs_path = _resolve_share_path(body.token, body.path)
+	if not os.path.exists(abs_path):
+		raise HTTPException(status_code=404, detail="Path not found")
+	return _update_meta_abs(abs_path, body.modified, body.readonly)
 
 class CopyBody(BaseModel):
 	source: str

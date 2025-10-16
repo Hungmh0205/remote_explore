@@ -25,12 +25,17 @@
       .listing { border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; }
       table { width: 100%; border-collapse: collapse; }
       th, td { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; text-align: left; }
+      tbody tr:not(.selected):hover { background: #f8fafc; }
       .folder, .file { cursor: default; }
       .folder { font-weight: 600; }
-      button { padding: 6px 10px; cursor: pointer; margin: 4px; }
+      button { padding: 6px 10px; cursor: pointer; margin: 4px; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; transition: background 0.15s ease, transform 0.02s ease; }
+      button:hover { background: #e9ebef; }
+      button:active { transform: translateY(1px); background: #e1e4e8; }
       label.upload input { display: none; }
-      label.upload span { display: inline-block; padding: 6px 10px; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; cursor: pointer; }
-      tr.selected { background: #eef2ff; }
+      label.upload span { display: inline-block; padding: 6px 10px; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; cursor: pointer; transition: background 0.15s ease, transform 0.02s ease; }
+      label.upload span:hover { background: #e9ebef; }
+      label.upload span:active { transform: translateY(1px); background: #e1e4e8; }
+      tr.selected { background: #e9ebef; }
       tr.drop-target { outline: 2px dashed #6366f1; }
       .context-menu { position: absolute; background: #fff; border: 1px solid #e5e7eb; box-shadow: 0 10px 30px rgba(0,0,0,0.08); border-radius: 6px; min-width: 180px; padding: 6px 0; z-index: 1000; }
       .menu-item { padding: 6px 12px; cursor: pointer; }
@@ -39,13 +44,58 @@
       .menu-sep { height: 1px; background: #e5e7eb; margin: 6px 0; }
       details { padding: 0 6px; }
       .menu-sub { padding-left: 10px; }
+      .sidebar-footer { position: absolute; left: 12px; right: 12px; bottom: 15px; }
+      a.btn { display:block; width:100%; padding: 10px 12px; background: #f8fafc; border: none; border-radius: 6px; text-decoration: none; color: inherit; text-align:left }
+      a.btn:hover { background: #f8fafc }
+      a.btn:active { background: #e9edf3 }
+      body.dark a.btn { background: #111827; color: #e5e7eb; border: none }
+      body.dark a.btn:hover { background: #0b1220 }
+      body.dark a.btn:active { background: #0a1120 }
       .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
       .modal-card { width: 80vw; max-width: 900px; height: 70vh; background: #fff; border-radius: 8px; display: flex; flex-direction: column; }
       .modal-head { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: space-between; }
       .modal-card textarea { flex: 1; width: 100%; border: none; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 13px; }
+      /* Dark mode overrides */
+      body.dark { background: #0f172a; color: #e5e7eb; }
+      body.dark .sidebar { background: #111827; border-color: #1f2937; }
+      body.dark .pin-item:hover { background: #0b1220; }
+      body.dark .unpin { background: transparent; color: #e5e7eb; border-color: #1f2937 }
+      body.dark .sidebar-hint { color: #94a3b8 }
+      body.dark .listing { border-color: #1f2937 }
+      body.dark th, body.dark td { border-color: #1f2937 }
+      body.dark tr.selected { background: #0b1220 }
+      body.dark tbody tr:not(.selected):hover { background: #0b1220 }
+      body.dark .context-menu { background: #0f172a; border-color: #1f2937 }
+      body.dark .menu-item:hover { background: #0b1220 }
+      body.dark button { background: #0b1220; color: #e5e7eb; border: 1px solid #1f2937; border-radius: 4px }
+      body.dark button:hover { background: #0e1526 }
+      body.dark button:active { background: #0a1120 }
+      body.dark input { background: transparent; color: #e5e7eb; border: 1px solid #1f2937 }
+      body.dark label.upload span { background: #0b1220; color: #e5e7eb; border: 1px solid #1f2937 }
+      body.dark label.upload span:hover { background: #0e1526 }
+      body.dark label.upload span:active { background: #0a1120 }
+      /* Modal dark mode */
+      body.dark .modal-card { background: #0f172a; border: 1px solid #1f2937 }
+      body.dark .modal-head { border-color: #1f2937 }
+      body.dark .modal-card textarea { background: transparent; color: #e5e7eb }
+      .CodeMirror { height: 100%; }
+      body.dark .CodeMirror { background: transparent; color: #e5e7eb }
+      body.dark .cm-s-default .CodeMirror-gutters { background: #0f172a; border-right: 1px solid #1f2937 }
+      /* Breadcrumbs and layout helpers */
+      .breadcrumbs { font-size: 12px; color: #6b7280; margin: 8px 12px; display:flex; gap:6px; flex-wrap:wrap; }
+      body.dark .breadcrumbs { color: #94a3b8 }
+      .breadcrumbs span { cursor:pointer; color: inherit }
+      .spacer { flex: 1 }
     </style>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://unpkg.com/axios@1.7.7/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/codemirror@5/lib/codemirror.css">
+    <link rel="stylesheet" href="https://unpkg.com/codemirror@5/addon/dialog/dialog.css">
+    <script src="https://unpkg.com/codemirror@5/lib/codemirror.js"></script>
+    <script src="https://unpkg.com/codemirror@5/mode/meta.js"></script>
+    <script src="https://unpkg.com/codemirror@5/addon/search/searchcursor.js"></script>
+    <script src="https://unpkg.com/codemirror@5/addon/search/search.js"></script>
+    <script src="https://unpkg.com/codemirror@5/addon/dialog/dialog.js"></script>
   </head>
   <body>
     <div id="app" class="app">
@@ -54,9 +104,18 @@
         <div class="pathbar">
           <input v-model="currentPath" @keyup.enter="navigate(currentPath)" placeholder="Nhập đường dẫn (ví dụ C:\\ hoặc D:\\projects)" />
           <button @click="navigate(currentPath)">Go</button>
-          <a href="/admin.html" style="margin-left:8px; font-size:14px">Admin</a>
+          
+          <span class="spacer"></span>
+          <button @click="toggleTheme">{{ theme === 'dark' ? 'Light' : 'Dark' }}</button>
         </div>
       </header>
+      <div class="breadcrumbs">
+        <template v-for="(seg, i) in pathSegments" :key="i">
+          <span @click="navigate(seg.path)">{{ seg.label }}</span>
+          <span v-if="i < pathSegments.length - 1">›</span>
+        </template>
+      </div>
+      
       <div class="layout">
         <aside class="sidebar" @dragover.prevent="onSidebarDragOver" @dragleave="onSidebarDragLeave" @drop="onSidebarDrop">
           <div class="sidebar-head">This PC</div>
@@ -73,6 +132,9 @@
             </li>
           </ul>
           <div class="sidebar-hint">Kéo thư mục vào đây để Pin</div>
+          <div class="sidebar-footer">
+            <a class="btn" href="/admin.html">Admin</a>
+          </div>
         </aside>
         <main class="content">
       <section class="toolbar">
@@ -85,6 +147,9 @@
         <button v-if="clipboard.item" @click="pasteHere">Paste</button>
         <button v-if="selected.size > 0" @click="downloadSelected">Download Selected ({{ selected.size }})</button>
         <button v-if="undoToken" @click="undo">Undo</button>
+        <span class="spacer"></span>
+        <input v-model="filterText" placeholder="Search in this folder" style="max-width:240px" />
+        <span class="muted" style="font-size:12px">Page {{ page }} / {{ totalPages }}</span>
       </section>
       <section class="listing" @contextmenu.prevent="openBlankMenu($event)">
         <table>
@@ -96,7 +161,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(e, idx) in entries" :key="e.path"
+            <tr v-for="(e, idx) in paginatedEntries" :key="e.path"
                 :class="{ selected: isSelected(e) }"
                 @click="onRowClick($event, e, idx)"
                 @contextmenu.prevent="openContextMenu($event, e)"
@@ -112,7 +177,6 @@
               </td>
               <td>{{ e.is_dir ? '' : formatSize(e.size) }}</td>
               <td>{{ formatTime(e.modified) }}</td>
-              <td></td>
             </tr>
           </tbody>
         </table>
@@ -123,10 +187,13 @@
         <template v-if="menu.item">
           <div class="menu-item" @click="cmOpen(menu.item)">Open</div>
           <div class="menu-item" v-if="isTextFile(menu.item)" @click="cmEdit(menu.item)">Edit</div>
+          <div class="menu-item" @click="pin(menu.item.path)">Pin</div>
           <div class="menu-item" @click="cmCopy(menu.item)">Copy</div>
           <div class="menu-item" @click="cmCut(menu.item)">Cut</div>
           <div class="menu-item" v-if="!menu.item?.is_dir" @click="cmDownload(menu.item)">Download</div>
           <div class="menu-item" v-if="menu.item?.is_dir" @click="cmZipDownload(menu.item)">Download (ZIP)</div>
+          <div class="menu-item" v-if="!menu.item?.is_dir" @click="preview(menu.item)">Preview</div>
+          <div class="menu-item" @click="openProperties(menu.item)">Properties</div>
           <div class="menu-item" @click="openShare(menu.item)">Share</div>
           <div class="menu-item" @click="cmRename(menu.item)">Rename</div>
           <div class="menu-item danger" @click="cmDelete(menu.item)">Delete</div>
@@ -153,6 +220,7 @@
               <label><input type="radio" value="edit" v-model="share.access" /> Edit</label>
               <label><input type="checkbox" v-model="share.allowDownload" /> Allow download</label>
             </div>
+            
             <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
               <label>Expire (hours): <input type="number" min="0" step="1" v-model.number="share.expiresHours" :disabled="share.noExpiry" style="width:100px" /></label>
               <label><input type="checkbox" v-model="share.noExpiry" /> No expiry</label>
@@ -177,24 +245,67 @@
           <div class="modal-head">
             <strong>{{ editor.name }}</strong>
             <div style="display:flex; gap:8px; align-items:center">
-              <label><input type="checkbox" v-model="editor.editable" /> Edit</label>
+              <label v-if="editor.type==='text'"><input type="checkbox" v-model="editor.editable" @change="applyEditorReadonly" /> Edit</label>
               <button @click="closeEditor">Close</button>
-              <button v-if="editor.editable" @click="saveEditor">Save</button>
+              <button v-if="editor.type==='text' && editor.editable" @click="saveEditor">Save</button>
             </div>
           </div>
-          <textarea v-model="editor.content" :readonly="!editor.editable"></textarea>
+          <div v-if="editor.type==='text'" style="flex:1; min-height:0">
+            <div id="cm-host" style="width:100%; height:100%"></div>
+          </div>
+          <div v-else-if="editor.type==='image'" style="flex:1; display:flex; align-items:center; justify-content:center; padding:20px; overflow:auto">
+            <img :src="editor.url" :alt="editor.name" style="max-width:100%; max-height:100%; object-fit:contain" @error="onPreviewError" />
+          </div>
+          <div v-else-if="editor.type==='pdf'" style="flex:1; display:flex;">
+            <iframe :src="editor.url" type="application/pdf" style="width:100%; height:100%; border:none" onerror="this.__vue_onerror && this.__vue_onerror()"></iframe>
+          </div>
+          <div v-else-if="editor.type==='audio'" style="flex:1; display:flex; align-items:center; justify-content:center; padding:20px">
+            <audio :src="editor.url" controls style="width:100%" @error="onPreviewError"></audio>
+          </div>
+          <div v-else-if="editor.type==='video'" style="flex:1; display:flex; align-items:center; justify-content:center; padding:20px">
+            <video :src="editor.url" controls style="max-width:100%; max-height:100%" @error="onPreviewError"></video>
+          </div>
+          <div v-else style="flex:1; display:flex; align-items:center; justify-content:center; padding:20px">
+            <div style="text-align:center; color:#6b7280">
+              <p>Preview not available.</p>
+              <button @click="cmDownload({ path: editor.path, name: editor.name })">Download</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Properties Modal -->
+      <div v-if="propsModal.visible" class="modal" @click.self="closeProperties">
+        <div class="modal-card" style="max-width:560px; width:80vw; height:auto">
+          <div class="modal-head">
+            <strong>Properties: {{ propsModal.data?.name || '' }}</strong>
+            <button @click="closeProperties">Close</button>
+          </div>
+          <div style="padding:12px; display:grid; gap:10px">
+            <div><strong>Path:</strong> <span style="word-break:break-all">{{ propsModal.data?.path }}</span></div>
+            <div><strong>Type:</strong> {{ propsModal.data?.is_dir ? 'Folder' : 'File' }}</div>
+            <div><strong>Size:</strong> {{ propsModal.data ? (propsModal.data.is_dir ? '' : formatSize(propsModal.data.size)) : '' }}</div>
+            <div><strong>Modified:</strong>
+              <input type="datetime-local" :value="propsModifiedLocal" @change="onPropsModifiedChange($event)" />
+            </div>
+            <div><label><input type="checkbox" v-model="propsModal.readonly" /> Readonly</label></div>
+            <div style="display:flex; gap:8px; justify-content:flex-end">
+              <button @click="saveProperties">Save</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
     <script>
-      const { createApp, ref, onMounted, reactive } = Vue
+      const { createApp, ref, onMounted, reactive, computed, nextTick } = Vue
       createApp({
         setup() {
           const currentPath = ref('C:\\')
           const entries = ref([])
           const menu = reactive({ visible: false, x: 0, y: 0, item: null })
           const clipboard = reactive({ item: null, mode: null })
-          const editor = reactive({ visible: false, path: '', name: '', content: '', editable: false })
+          const editor = reactive({ visible: false, path: '', name: '', content: '', editable: false, type: '', url: '', cm: null })
+          const propsModal = reactive({ visible: false, item: null, data: null, readonly: false, modified: null })
           const selected = reactive(new Set())
           let lastClickedIndex = -1
           const dragging = reactive({ active: false, items: [] })
@@ -203,6 +314,10 @@
           const drives = ref([])
           const share = reactive({ visible: false, item: null, access: 'readonly', allowDownload: true, noExpiry: true, expiresHours: 24, url: '', generating: false, expiresAt: null })
           const sidebarEl = ref(null)
+          const filterText = ref('')
+          const page = ref(1)
+          const pageSize = ref(200)
+          const theme = ref('light')
 
           async function load(path) {
             try {
@@ -210,6 +325,7 @@
               entries.value = res.data
               currentPath.value = path
               try { localStorage.setItem('rfe:lastPath', path) } catch {}
+              page.value = 1
             } catch (err) {
               const msg = err?.response?.data?.detail || err?.message || 'Unknown error'
               alert('Không thể truy cập thư mục này: ' + msg)
@@ -255,6 +371,19 @@
             if (idx > 2) load(p.slice(0, idx)); else load(p.slice(0, 3))
           }
           function openDir(e) { if (e.is_dir) load(e.path) }
+          function getFileTypeByName(name) {
+            const lower = name.toLowerCase(); const ext = lower.split('.').pop()
+            const text = ['txt','md','log','json','xml','csv','ini','conf','yaml','yml','py','js','ts','java','c','cpp','cs','go','rb','php','bat','ps1','html','css','sql','sh']
+            if (text.includes(ext)) return 'text'
+            const img = ['jpg','jpeg','png','gif','bmp','webp','svg','ico']
+            if (img.includes(ext)) return 'image'
+            if (ext === 'pdf') return 'pdf'
+            const aud = ['mp3','wav','ogg','m4a','aac','flac']
+            if (aud.includes(ext)) return 'audio'
+            const vid = ['mp4','webm','ogv','mkv','mov']
+            if (vid.includes(ext)) return 'video'
+            return 'other'
+          }
           async function downloadFile(e) {
             const url = `/api/file?path=${encodeURIComponent(e.path)}`
             const a = document.createElement('a')
@@ -377,7 +506,7 @@
           }
           function isTextFile(item) {
             if (!item || item.is_dir) return false
-            const exts = ['.txt','.md','.log','.json','.xml','.csv','.ini','.conf','.yaml','.yml','.py','.js','.ts','.java','.c','.cpp','.cs','.go','.rb','.php','.bat','.ps1']
+            const exts = ['.txt','.md','.log','.json','.xml','.csv','.ini','.conf','.cfg','.yaml','.yml','.toml','.properties','.reg','.vbs','.py','.js','.ts','.java','.c','.cpp','.cs','.go','.rb','.php','.bat','.cmd','.ps1','.html','.css','.sql','.sh']
             const name = item.name.toLowerCase()
             return exts.some(e => name.endsWith(e))
           }
@@ -391,8 +520,43 @@
           }
           async function cmEdit(item) {
             if (!item || item.is_dir) return
+            // force as text editor
             const res = await axios.get('/api/read', { params: { path: item.path }, responseType: 'text' })
-            editor.visible = true; editor.path = item.path; editor.name = item.name; editor.content = res.data; editor.editable = false
+            editor.visible = true; editor.path = item.path; editor.name = item.name; editor.type = 'text'; editor.content = res.data; editor.editable = false
+            await nextTick()
+            if (editor.cm) { try { editor.cm.toTextArea && editor.cm.toTextArea() } catch {} editor.cm = null }
+            const host = document.getElementById('cm-host')
+            if (host) {
+              const ext = item.name.toLowerCase().split('.').pop(); const info = CodeMirror.findModeByExtension(ext)
+              editor.cm = CodeMirror(host, { value: editor.content, readOnly: !editor.editable, lineNumbers: true, lineWrapping: true })
+              if (info && info.mode) { try { await import('https://unpkg.com/codemirror@5/mode/' + info.mode + '/' + info.mode + '.js') } catch {} editor.cm.setOption('mode', info.mime || info.mode) }
+            }
+          }
+          async function preview(item) {
+            if (!item || item.is_dir) return
+            const ftype = getFileTypeByName(item.name)
+            editor.visible = true; editor.path = item.path; editor.name = item.name; editor.type = ftype; editor.editable = false
+            if (ftype === 'text') {
+              const res = await axios.get('/api/read', { params: { path: item.path }, responseType: 'text' })
+              editor.content = res.data
+              await nextTick()
+              const host = document.getElementById('cm-host'); if (host) {
+                const ext = item.name.toLowerCase().split('.').pop(); const info = CodeMirror.findModeByExtension(ext)
+                editor.cm = CodeMirror(host, { value: editor.content, readOnly: true, lineNumbers: true, lineWrapping: true })
+                if (info && info.mode) { try { await import('https://unpkg.com/codemirror@5/mode/' + info.mode + '/' + info.mode + '.js') } catch {} editor.cm.setOption('mode', info.mime || info.mode) }
+              }
+            } else if (ftype === 'image' || ftype === 'pdf' || ftype === 'audio' || ftype === 'video') {
+              editor.url = `/api/open?path=${encodeURIComponent(item.path)}`
+            } else {
+              // Fallback attempt: text
+              try {
+                const res = await axios.get('/api/read', { params: { path: item.path }, responseType: 'text' })
+                editor.type = 'text'; editor.content = res.data
+                await nextTick(); const host = document.getElementById('cm-host'); if (host) editor.cm = CodeMirror(host, { value: editor.content, readOnly: true, lineNumbers: true, lineWrapping: true })
+              } catch (e) {
+                alert('Cannot preview this file. Please download and open locally.'); editor.visible = false
+              }
+            }
           }
           function cmCopy(item) { clipboard.item = item; clipboard.mode = 'copy' }
           function cmCut(item) { clipboard.item = item; clipboard.mode = 'cut' }
@@ -462,9 +626,13 @@
             await axios.post('/api/save', { path: join(currentPath.value, name), content: '' })
             await load(currentPath.value)
           }
+          function applyEditorReadonly() {
+            if (editor.cm) editor.cm.setOption('readOnly', !editor.editable)
+          }
           async function saveEditor() {
+            if (editor.cm) editor.content = editor.cm.getValue()
             await axios.post('/api/save', { path: editor.path, content: editor.content })
-            editor.editable = false
+            editor.editable = false; if (editor.cm) editor.cm.setOption('readOnly', true)
           }
           function closeEditor() { editor.visible = false }
           function join(a, b) { return a.endsWith('\\') ? a + b : a + '\\' + b }
@@ -476,6 +644,73 @@
           }
           function formatTime(epoch) { return new Date(epoch * 1000).toLocaleString() }
           function formatExpire(ts) { try { return new Date(ts * 1000).toLocaleString() } catch { return '' } }
+          const filteredEntries = computed(() => {
+            const q = filterText.value.trim().toLowerCase()
+            if (!q) return entries.value
+            return entries.value.filter(e => e.name.toLowerCase().includes(q))
+          })
+          
+          const totalPages = computed(() => Math.max(1, Math.ceil(filteredEntries.value.length / pageSize.value)))
+          const paginatedEntries = computed(() => {
+            const start = (page.value - 1) * pageSize.value
+            return filteredEntries.value.slice(start, start + pageSize.value)
+          })
+          function nextPage() { if (page.value < totalPages.value) page.value++ }
+          function prevPage() { if (page.value > 1) page.value-- }
+          const pathSegments = computed(() => {
+            const p = currentPath.value.replace(/\\+$/,'')
+            if (!/^[A-Za-z]:\\/.test(p)) return []
+            const parts = p.split('\\').filter(Boolean)
+            const segs = []
+            let accum = ''
+            for (let i = 0; i < parts.length; i++) {
+              if (i === 0) {
+                accum = parts[0] + '\\'
+                segs.push({ label: parts[0] + '\\', path: accum })
+              } else {
+                accum = accum.endsWith('\\') ? accum + parts[i] : accum + '\\' + parts[i]
+                segs.push({ label: parts[i], path: accum })
+              }
+            }
+            return segs
+          })
+          function toggleTheme() {
+            theme.value = theme.value === 'dark' ? 'light' : 'dark'
+            try { localStorage.setItem('rfe:theme', theme.value) } catch {}
+            document.body.classList.toggle('dark', theme.value === 'dark')
+          }
+          function onPreviewError() { alert('Cannot preview this file. Please download and open locally.'); editor.visible = false }
+          try { Object.defineProperty(window, '__vue_onerror', { value: onPreviewError }) } catch {}
+          function toLocalDateTimeInput(ts) {
+            try { const d = new Date(ts * 1000); const pad = n => String(n).padStart(2,'0'); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}` } catch { return '' }
+          }
+          function fromLocalDateTimeInput(val) {
+            try { const d = new Date(val); return Math.floor(d.getTime()/1000) } catch { return null }
+          }
+          async function openProperties(item) {
+            if (!item) return
+            propsModal.visible = true; propsModal.item = item; propsModal.data = null
+            try {
+              const res = await axios.get('/api/stat', { params: { path: item.path } })
+              propsModal.data = res.data
+              propsModal.readonly = !!res.data?.readonly
+              propsModal.modified = res.data?.modified || null
+            } catch (err) {
+              alert('Failed to load properties: ' + (err.response?.data?.detail || err.message))
+            }
+          }
+          function closeProperties() { propsModal.visible = false }
+          const propsModifiedLocal = computed(() => propsModal.data ? toLocalDateTimeInput(propsModal.modified || propsModal.data.modified) : '')
+          function onPropsModifiedChange(ev) { const v = ev.target.value; const ts = fromLocalDateTimeInput(v); if (ts) propsModal.modified = ts }
+          async function saveProperties() {
+            if (!propsModal.item) return
+            try {
+              await axios.post('/api/update_meta', { path: propsModal.item.path, modified: propsModal.modified, readonly: propsModal.readonly })
+              await openProperties(propsModal.item)
+            } catch (err) {
+              alert('Failed to save properties: ' + (err.response?.data?.detail || err.message))
+            }
+          }
           onMounted(async () => {
             let initial = currentPath.value
             try {
@@ -488,8 +723,39 @@
               if (Array.isArray(res.data)) drives.value = res.data
             } catch {}
             await fetchPins()
+            try {
+              const t = localStorage.getItem('rfe:theme')
+              if (t === 'dark') { theme.value = 'dark'; document.body.classList.add('dark') }
+            } catch {}
+            window.addEventListener('keydown', (ev) => {
+              const tag = (ev.target && ev.target.tagName) ? ev.target.tagName.toLowerCase() : ''
+              const isTyping = tag === 'input' || tag === 'textarea'
+              if (ev.key === 'Enter') {
+                const first = entries.value.find(e => selected.has(e.path))
+                if (first) { ev.preventDefault(); first.is_dir ? openDir(first) : cmOpen(first) }
+              }
+              if (ev.key === 'Backspace' && !isTyping) {
+                ev.preventDefault();
+                goUp()
+              }
+              if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'c') {
+                const first = entries.value.find(e => selected.has(e.path))
+                if (first) { ev.preventDefault(); cmCopy(first) }
+              }
+              if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'x') {
+                const first = entries.value.find(e => selected.has(e.path))
+                if (first) { ev.preventDefault(); cmCut(first) }
+              }
+              if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'v') {
+                ev.preventDefault(); pasteHere()
+              }
+              if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') {
+                ev.preventDefault();
+                undo()
+              }
+            })
           })
-          return { currentPath, entries, navigate, goUp, openDir, downloadFile, downloadSelected, onUpload, promptNew, promptRename, deletePath, formatSize, formatTime, openContextMenu, openBlankMenu, menu, cmOpen, cmEdit, cmCopy, cmCut, cmDownload, cmZipDownload, cmRename, cmDelete, clipboard, pasteHere, createFolder, createFile, editor, saveEditor, closeEditor, isTextFile, isSelected, onRowClick, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, undoToken, undo, pins, drives, displayName, unpin, onSidebarDragOver, onSidebarDragLeave, onSidebarDrop, share, openShare, closeShare, createShareLink, copyShare, formatExpire, selected }
+          return { currentPath, entries, navigate, goUp, openDir, downloadFile, downloadSelected, onUpload, promptNew, promptRename, deletePath, formatSize, formatTime, openContextMenu, openBlankMenu, menu, cmOpen, cmEdit, cmCopy, cmCut, cmDownload, cmZipDownload, cmRename, cmDelete, clipboard, pasteHere, createFolder, createFile, editor, saveEditor, closeEditor, isTextFile, isSelected, onRowClick, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, undoToken, undo, pins, drives, displayName, pin, unpin, onSidebarDragOver, onSidebarDragLeave, onSidebarDrop, share, openShare, closeShare, createShareLink, copyShare, formatExpire, selected, filterText, page, pageSize, paginatedEntries, totalPages, pathSegments, theme, toggleTheme, preview, applyEditorReadonly, propsModal, openProperties, closeProperties, propsModifiedLocal, onPropsModifiedChange, saveProperties, onPreviewError }
         }
       }).mount('#app')
     </script>

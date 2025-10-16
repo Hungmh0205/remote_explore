@@ -10,13 +10,16 @@
       .top { display:flex; align-items:center; justify-content: space-between; gap: 12px; }
       .meta { font-size: 12px; color:#6b7280; }
       .pathbar { display:flex; gap:8px; margin: 10px 0; }
-      input { padding:6px 8px; width:100%; }
-      .toolbar { display:flex; gap:8px; margin: 8px 0; }
+      input { padding:6px 8px; width:100%; border: 1px solid #e5e7eb; background: transparent; }
+      .toolbar { display:flex; gap:8px; margin: 8px 0; align-items: center; }
       .listing { border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; }
       table { width: 100%; border-collapse: collapse; }
       th, td { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; text-align: left; }
-      tr.selected { background-color: #dbeafe; }
-      button { padding:6px 10px; cursor:pointer; }
+      tbody tr:not(.selected):hover { background: #f8fafc; }
+      tr.selected { background: #e9ebef; }
+      button { padding:6px 10px; cursor:pointer; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; transition: background 0.15s ease, transform 0.02s ease; }
+      button:hover { background: #e9ebef; }
+      button:active { background: #e1e4e8; transform: translateY(1px); }
       .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
       .modal-card { width: 80vw; max-width: 900px; height: 70vh; background: #fff; border-radius: 8px; display: flex; flex-direction: column; }
       .modal-head { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: space-between; }
@@ -26,25 +29,52 @@
       .modal-content iframe { width: 100%; height: 100%; border: none; }
       .modal-content .preview-error { text-align: center; color: #6b7280; }
       .hint { color:#6b7280; font-size:12px; }
+      /* Dark mode */
+      body.dark { background: #0f172a; color: #e5e7eb; }
+      body.dark .listing { border-color: #1f2937 }
+      body.dark th, body.dark td { border-color: #1f2937 }
+      body.dark tbody tr:not(.selected):hover { background: #0b1220 }
+      body.dark tr.selected { background: #0b1220 }
+      body.dark button { background: #0b1220; color: #e5e7eb; border: 1px solid #1f2937 }
+      body.dark button:hover { background: #0e1526 }
+      body.dark button:active { background: #0a1120 }
+      body.dark input { background: transparent; color: #e5e7eb; border: 1px solid #1f2937 }
+      body.dark .modal-card { background: #0f172a; border: 1px solid #1f2937 }
+      body.dark .modal-head { border-color: #1f2937 }
+      body.dark .modal-card textarea { background: transparent; color: #e5e7eb }
+      .CodeMirror { height: 100%; }
+      body.dark .CodeMirror { background: transparent; color: #e5e7eb }
+      body.dark .cm-s-default .CodeMirror-gutters { background: #0f172a; border-right: 1px solid #1f2937 }
     </style>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://unpkg.com/axios@1.7.7/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/codemirror@5/lib/codemirror.css">
+    <link rel="stylesheet" href="https://unpkg.com/codemirror@5/addon/dialog/dialog.css">
+    <script src="https://unpkg.com/codemirror@5/lib/codemirror.js"></script>
+    <script src="https://unpkg.com/codemirror@5/mode/meta.js"></script>
+    <script src="https://unpkg.com/codemirror@5/addon/search/searchcursor.js"></script>
+    <script src="https://unpkg.com/codemirror@5/addon/search/search.js"></script>
+    <script src="https://unpkg.com/codemirror@5/addon/dialog/dialog.js"></script>
   </head>
   <body>
     <div id="app" class="app">
       <div class="top">
         <h2 style="margin:0">Shared</h2>
+        <button @click="toggleTheme">{{ theme === 'dark' ? 'Light' : 'Dark' }}</button>
       </div>
       <div class="pathbar">
         <input v-model="currentRel" @keyup.enter="navigate(currentRel)" placeholder="Subpath (relative within share)" />
         <button @click="navigate(currentRel)">Go</button>
+        <span style="flex:1"></span>
+        <input v-if="needsPassword" v-model="password" type="password" placeholder="Share password" style="max-width:200px" />
+        <button v-if="needsPassword" @click="applyPassword">Unlock</button>
       </div>
       <div class="toolbar">
-        <button @click="goUp">Up</button>
+        <button @click="goUp">Back</button>
         <button v-if="selected.size > 0" @click="downloadSelected">Download Selected ({{ selected.size }})</button>
         <div class="hint">You can access items within this shared scope only.</div>
       </div>
-      <section class="listing">
+      <section class="listing" v-if="!ended">
         <table>
           <thead>
             <tr>
@@ -64,6 +94,7 @@
               <td>{{ formatTime(e.modified) }}</td>
               <td>
                 <template v-if="!e.is_dir">
+                  <button @click="openFile(e)">Preview</button>
                   <button @click="downloadFile(e)">Download</button>
                 </template>
               </td>
@@ -71,6 +102,17 @@
           </tbody>
         </table>
       </section>
+
+      <!-- Ended / Max access reached notice -->
+      <div v-else style="border:1px solid #e5e7eb; border-radius:8px; padding:20px; margin-top:12px; text-align:center;">
+        <h3 style="margin-top:0">Share is no longer available</h3>
+        <p class="muted">{{ endReason || 'This share has ended.' }}</p>
+        <div style="margin-top:12px">
+          <a href="/" class="btn">Go to Explorer</a>
+        </div>
+      </div>
+
+      
 
       <div v-if="editor.visible" class="modal" @click.self="closeEditor">
         <div class="modal-card">
@@ -84,13 +126,19 @@
             </div>
           </div>
           <div v-if="editor.type === 'text'" class="modal-content">
-            <textarea v-model="editor.content" :readonly="editor.readonly" style="width: 100%; height: 100%; border: none; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 13px; resize: none;"></textarea>
+            <div id="cm-editor" style="width:100%; height:100%"></div>
           </div>
           <div v-else-if="editor.type === 'image'" class="modal-content">
-            <img :src="editor.url" :alt="editor.name" />
+            <img :src="editor.url" :alt="editor.name" @error="onPreviewError" />
           </div>
           <div v-else-if="editor.type === 'pdf'" class="modal-content">
-            <iframe :src="editor.url" type="application/pdf"></iframe>
+            <iframe :src="editor.url" type="application/pdf" onerror="this.__vue_onerror && this.__vue_onerror()"></iframe>
+          </div>
+          <div v-else-if="editor.type === 'audio'" class="modal-content">
+            <audio :src="editor.url" controls style="width:100%" @error="onPreviewError"></audio>
+          </div>
+          <div v-else-if="editor.type === 'video'" class="modal-content">
+            <video :src="editor.url" controls style="max-width:100%; max-height:100%" @error="onPreviewError"></video>
           </div>
           <div v-else class="modal-content">
             <div class="preview-error">
@@ -102,25 +150,43 @@
       </div>
     </div>
     <script>
-      const { createApp, ref, onMounted, reactive } = Vue
+      const { createApp, ref, onMounted, reactive, nextTick } = Vue
       createApp({
         setup() {
           const token = new URLSearchParams(location.search).get('token') || ''
           const currentRel = ref('')
           const entries = ref([])
-          const editor = reactive({ visible: false, path: '', name: '', content: '', type: '', url: '', readonly: true })
+          const editor = reactive({ visible: false, path: '', name: '', content: '', type: '', url: '', readonly: true, cm: null })
           const shareInfo = ref(null)
           const selected = reactive(new Set())
           let lastClickedIndex = -1
+          
+          const ended = ref(false)
+          const endReason = ref('')
+          const theme = ref('light')
+          // Password gating not currently supported server-side; keep refs to avoid runtime errors
+          const needsPassword = ref(false)
+          const password = ref('')
+          const applyPassword = () => { /* no-op until password feature is implemented */ }
 
           if (!token) {
             document.body.innerHTML = '<div style="padding:20px">Missing token</div>'
           }
 
           async function load(rel) {
-            const res = await axios.get('/api/share/list', { params: { token, path: rel || '' } })
-            entries.value = res.data
-            currentRel.value = rel || ''
+            try {
+              const res = await axios.get('/api/share/list', { params: { token, path: rel || '' } })
+              entries.value = res.data
+              currentRel.value = rel || ''
+              ended.value = false
+            } catch (err) {
+              if (err?.response?.status === 410) {
+                ended.value = true
+                endReason.value = err?.response?.data?.detail || 'Share ended'
+              } else {
+                alert('Failed to load: ' + (err.response?.data?.detail || err.message))
+              }
+            }
           }
           
           async function loadShareInfo() {
@@ -154,7 +220,7 @@
             const ext = name.split('.').pop()
             
             // Text files
-            const textExts = ['txt','md','log','json','xml','csv','ini','conf','yaml','yml','py','js','ts','java','c','cpp','cs','go','rb','php','bat','ps1','html','css','sql','sh']
+            const textExts = ['txt','md','log','json','xml','csv','ini','conf','cfg','yaml','yml','toml','properties','reg','vbs','py','js','ts','java','c','cpp','cs','go','rb','php','bat','cmd','ps1','html','css','sql','sh']
             if (textExts.includes(ext)) return 'text'
             
             // Image files
@@ -163,6 +229,14 @@
             
             // PDF files
             if (ext === 'pdf') return 'pdf'
+
+            // Audio
+            const audioExts = ['mp3','wav','ogg','m4a','aac','flac']
+            if (audioExts.includes(ext)) return 'audio'
+
+            // Video
+            const videoExts = ['mp4','webm','ogv','mkv','mov']
+            if (videoExts.includes(ext)) return 'video'
             
             return 'other'
           }
@@ -181,11 +255,36 @@
               try {
                 const res = await axios.get('/api/share/read', { params: { token, path: rel }, responseType: 'text' })
                 editor.content = res.data
+                await nextTick()
+                if (editor.cm) { try { editor.cm.toTextArea && editor.cm.toTextArea() } catch {} editor.cm = null }
+                const host = document.getElementById('cm-editor')
+                if (host) {
+                  const ext = e.name.toLowerCase().split('.').pop()
+                  const info = CodeMirror.findModeByExtension(ext)
+                  editor.cm = CodeMirror(host, { value: editor.content, readOnly: editor.readonly, lineNumbers: true, lineWrapping: true })
+                  if (info && info.mode) { try { await import('https://unpkg.com/codemirror@5/mode/' + info.mode + '/' + info.mode + '.js') } catch {} editor.cm.setOption('mode', info.mime || info.mode) }
+                }
               } catch (err) {
+                if (err?.response?.status === 410) { ended.value = true; endReason.value = err?.response?.data?.detail || 'Share ended'; editor.visible = false; return }
+                if (err?.response?.status === 415) { alert('Cannot preview as text. Try downloading the file.'); editor.visible = false; return }
                 editor.content = 'Error loading file content'
               }
             } else if (fileType === 'image' || fileType === 'pdf') {
               editor.url = `/api/share/file?token=${encodeURIComponent(token)}&path=${encodeURIComponent(rel)}`
+            } else if (fileType === 'audio' || fileType === 'video') {
+              editor.url = `/api/share/file?token=${encodeURIComponent(token)}&path=${encodeURIComponent(rel)}`
+            } else {
+              // Fallback: try open as text if unknown
+              try {
+                const res = await axios.get('/api/share/read', { params: { token, path: rel }, responseType: 'text' })
+                editor.type = 'text'
+                editor.content = res.data
+                await nextTick()
+                const host = document.getElementById('cm-editor')
+                if (host) {
+                  editor.cm = CodeMirror(host, { value: editor.content, readOnly: editor.readonly, lineNumbers: true, lineWrapping: true })
+                }
+              } catch {}
             }
           }
           
@@ -193,16 +292,19 @@
           
           function toggleEdit() {
             editor.readonly = !editor.readonly
+            if (editor.cm) editor.cm.setOption('readOnly', editor.readonly)
           }
           
           async function saveFile() {
             try {
+              if (editor.cm) editor.content = editor.cm.getValue()
               await axios.post('/api/share/save', {
                 token,
                 path: editor.path,
                 content: editor.content
               })
               editor.readonly = true
+              if (editor.cm) editor.cm.setOption('readOnly', true)
               alert('File saved successfully!')
             } catch (err) {
               alert('Failed to save file: ' + (err.response?.data?.detail || err.message))
@@ -277,9 +379,21 @@
 
           onMounted(async () => { 
             await loadShareInfo()
-            await load('') 
+            await load('')
+            try {
+              const t = localStorage.getItem('rfe:theme')
+              if (t === 'dark') { theme.value = 'dark'; document.body.classList.add('dark') }
+            } catch {}
           })
-          return { currentRel, entries, navigate, goUp, openDir, downloadFile, openFile, closeEditor, toggleEdit, saveFile, editor, shareInfo, formatSize, formatTime, selected, isSelected, onRowClick, downloadSelected }
+          function toggleTheme() {
+            theme.value = theme.value === 'dark' ? 'light' : 'dark'
+            try { localStorage.setItem('rfe:theme', theme.value) } catch {}
+            document.body.classList.toggle('dark', theme.value === 'dark')
+          }
+          function onPreviewError() { alert('Cannot preview this file. Please download and open locally.'); editor.visible = false }
+          // attach iframe error bridge
+          try { Object.defineProperty(window, '__vue_onerror', { value: onPreviewError }) } catch {}
+          return { currentRel, entries, navigate, goUp, openDir, downloadFile, openFile, closeEditor, toggleEdit, saveFile, editor, shareInfo, formatSize, formatTime, selected, isSelected, onRowClick, downloadSelected, theme, toggleTheme, needsPassword, password, applyPassword, onPreviewError }
         }
       }).mount('#app')
     </script>

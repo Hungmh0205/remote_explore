@@ -43,4 +43,14 @@ def admin_delete_pin(id: int):
 	return {"ok": True}
 
 
+@router.post("/admin/shares/cleanup")
+def admin_cleanup_shares() -> Dict[str, int]:
+    # Remove expired shares only
+    expired = query_all("SELECT token FROM shares WHERE expires_at IS NOT NULL AND expires_at < strftime('%s','now')")
+    count_expired = len(expired)
+    for r in expired:
+        execute("DELETE FROM shares WHERE token = ?", (r["token"],))
+    return {"expired": count_expired}
+
+
 

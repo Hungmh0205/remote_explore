@@ -10,12 +10,23 @@
       h2 { margin: 12px 0; }
       table { width: 100%; border-collapse: collapse; }
       th, td { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; text-align: left; }
+      tbody tr:hover { background: #f8fafc; }
       .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0; }
       .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background: #fff; }
       .muted { color:#6b7280; font-size:12px; }
       .toolbar { display:flex; gap:8px; align-items:center; margin: 8px 0; }
-      button { padding:6px 10px; cursor:pointer; }
+      button { padding:6px 10px; cursor:pointer; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; transition: background 0.15s ease, transform 0.02s ease; }
+      button:hover { background: #e9ebef; }
+      button:active { background: #e1e4e8; transform: translateY(1px); }
       a { color:#2563eb; text-decoration:none; }
+      /* Dark mode */
+      body.dark { background: #0f172a; color: #e5e7eb; }
+      body.dark th, body.dark td { border-color: #1f2937 }
+      body.dark tbody tr:hover { background: #0b1220 }
+      body.dark .card { background: #0f172a; border-color: #1f2937 }
+      body.dark button { background: #0b1220; color: #e5e7eb; border: 1px solid #1f2937 }
+      body.dark button:hover { background: #0e1526 }
+      body.dark button:active { background: #0a1120 }
     </style>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://unpkg.com/axios@1.7.7/dist/axios.min.js"></script>
@@ -24,6 +35,8 @@
     <div id="app" class="app">
       <div class="toolbar">
         <a href="/index.html">← Back to Explorer</a>
+        <span style="flex:1"></span>
+        <button @click="toggleTheme">{{ theme === 'dark' ? 'Light' : 'Dark' }}</button>
       </div>
       <h2>Database Summary</h2>
       <div class="cards">
@@ -92,6 +105,7 @@
           const summary = ref({ shares: 0, pins: 0 })
           const shares = ref([])
           const pins = ref([])
+          const theme = ref('light')
 
           async function load() {
             const [sum, sh, ps] = await Promise.all([
@@ -121,8 +135,19 @@
             try { return new Date(Number(ts) * 1000).toLocaleString() } catch { return String(ts) }
           }
 
-          onMounted(load)
-          return { summary, shares, pins, delShare, delPin, formatTime }
+          onMounted(() => {
+            load()
+            try {
+              const t = localStorage.getItem('rfe:theme')
+              if (t === 'dark') { theme.value = 'dark'; document.body.classList.add('dark') }
+            } catch {}
+          })
+          function toggleTheme() {
+            theme.value = theme.value === 'dark' ? 'light' : 'dark'
+            try { localStorage.setItem('rfe:theme', theme.value) } catch {}
+            document.body.classList.toggle('dark', theme.value === 'dark')
+          }
+          return { summary, shares, pins, delShare, delPin, formatTime, theme, toggleTheme }
         }
       }).mount('#app')
     </script>
