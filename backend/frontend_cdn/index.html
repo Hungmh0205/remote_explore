@@ -81,6 +81,9 @@
       .CodeMirror { height: 100%; }
       body.dark .CodeMirror { background: transparent; color: #e5e7eb }
       body.dark .cm-s-default .CodeMirror-gutters { background: #0f172a; border-right: 1px solid #1f2937 }
+      /* Improve CodeMirror caret/selection visibility in dark mode */
+      body.dark .CodeMirror-cursor { border-left: 2px solid #e5e7eb !important }
+      body.dark .CodeMirror-selected { background: rgba(148,163,184,0.25) !important }
       /* Breadcrumbs and layout helpers */
       .breadcrumbs { font-size: 12px; color: #6b7280; margin: 8px 12px; display:flex; gap:6px; flex-wrap:wrap; }
       body.dark .breadcrumbs { color: #94a3b8 }
@@ -173,7 +176,7 @@
                 @drop="e.is_dir && onDrop($event, e)">
               <td>
                 <span v-if="e.is_dir" class="folder" @dblclick="openDir(e)">📁 {{ e.name }}</span>
-                <span v-else class="file">📄 {{ e.name }}</span>
+                <span v-else class="file" @dblclick="preview(e)">📄 {{ e.name }}</span>
               </td>
               <td>{{ e.is_dir ? '' : formatSize(e.size) }}</td>
               <td>{{ formatTime(e.modified) }}</td>

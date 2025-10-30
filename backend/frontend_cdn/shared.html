@@ -90,8 +90,8 @@
                 <span v-if="e.is_dir" style="font-weight:600; cursor:pointer" @dblclick="openDir(e)">📁 {{ e.name }}</span>
                 <span v-else style="cursor:pointer" @dblclick="openFile(e)">📄 {{ e.name }}</span>
               </td>
-              <td>{{ e.is_dir ? '' : formatSize(e.size) }}</td>
-              <td>{{ formatTime(e.modified) }}</td>
+              <td>{{ e.is_dir ? '' : formatSize(e.size || 0) }}</td>
+              <td>{{ formatTime(e.modified || 0) }}</td>
               <td>
                 <template v-if="!e.is_dir">
                   <button @click="openFile(e)">Preview</button>
@@ -208,14 +208,20 @@
             const next = (currentRel.value ? currentRel.value.replace(/[\\/]+$/,'') + '/' : '') + e.name
             load(next)
           }
+          function resolveRelFor(eName) {
+            // If sharing a single file, backend expects path '' for that file
+            if (shareInfo.value && !shareInfo.value.is_dir) return ''
+            return (currentRel.value ? currentRel.value.replace(/[\\/]+$/,'') + '/' : '') + eName
+          }
           function downloadFile(e) {
             const a = document.createElement('a')
-            const rel = (currentRel.value ? currentRel.value.replace(/[\\/]+$/,'') + '/' : '') + e.name
+            const rel = resolveRelFor(e.name)
             a.href = `/api/share/file?token=${encodeURIComponent(token)}&path=${encodeURIComponent(rel)}&download=true`
             a.download = e.name
             a.click()
           }
           function getFileType(filename) {
+            if (!filename || typeof filename !== 'string') return 'other'
             const name = filename.toLowerCase()
             const ext = name.split('.').pop()
             
@@ -242,7 +248,7 @@
           }
           
           async function openFile(e) {
-            const rel = (currentRel.value ? currentRel.value.replace(/[\\/]+$/,'') + '/' : '') + e.name
+            const rel = resolveRelFor(e.name)
             const fileType = getFileType(e.name)
             
             editor.visible = true
@@ -377,9 +383,27 @@
             }
           }
 
-          onMounted(async () => { 
-            await loadShareInfo()
-            await load('')
+          onMounted(async () => {
+            await loadShareInfo();
+            if (shareInfo.value && shareInfo.value.is_dir) {
+              await load('');
+            } else if (shareInfo.value) {
+              // File share: fetch accurate metadata within share scope
+              try {
+                const statRes = await axios.get('/api/share/stat', { params: { token, path: '' } })
+                const meta = statRes.data || {}
+                const n = typeof meta.name === 'string' ? meta.name : (shareInfo.value.name || '')
+                const s = typeof meta.size === 'number' ? meta.size : (typeof shareInfo.value.size === 'number' ? shareInfo.value.size : 0)
+                const m = typeof meta.modified === 'number' ? meta.modified : (typeof shareInfo.value.modified === 'number' ? shareInfo.value.modified : 0)
+                entries.value = [{ name: n, is_dir: false, size: s, modified: m, path: '' }]
+              } catch (e) {
+                const n = shareInfo.value.name || ''
+                const s = typeof shareInfo.value.size === 'number' ? shareInfo.value.size : 0
+                const m = typeof shareInfo.value.modified === 'number' ? shareInfo.value.modified : 0
+                entries.value = [{ name: n, is_dir: false, size: s, modified: m, path: '' }]
+              }
+              currentRel.value = ''
+            }
             try {
               const t = localStorage.getItem('rfe:theme')
               if (t === 'dark') { theme.value = 'dark'; document.body.classList.add('dark') }
