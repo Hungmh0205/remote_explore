@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Remote Console</title>
+    <!-- Xterm.js CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <style>
+        body { margin: 0; padding: 0; background-color: #000; height: 100vh; width: 100vw; overflow: hidden; }
+        #terminal { width: 100%; height: 100%; }
+    </style>
+</head>
+<body>
+    <div id="terminal"></div>
+
+    <!-- Xterm.js Library -->
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <!-- Xterm Addon Fit -->
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+
+    <script>
+        // Check if user is authenticated (roughly via cookie existence, though WS will enforce it)
+        // Main logic
+        document.addEventListener('DOMContentLoaded', () => {
+            const term = new Terminal({
+                cursorBlink: true,
+                macOptionIsMeta: true,
+                scrollback: 1000,
+                fontSize: 14,
+                fontFamily: 'Consolas, "Courier New", monospace',
+                theme: {
+                    background: '#0f0f0f',
+                    foreground: '#cccccc'
+                }
+            });
+
+            const fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.open(document.getElementById('terminal'));
+            fitAddon.fit();
+
+            // WebSocket connection
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/api/ws/console`;
+            const ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                // Send initial size
+                sendResize();
+                term.write('\r\n\x1b[32m[Connected to Remote Server]\x1b[0m\r\n');
+            };
+
+            ws.onmessage = (event) => {
+                term.write(event.data);
+            };
+
+            ws.onclose = () => {
+                term.write('\r\n\x1b[31m[Connection Closed]\x1b[0m\r\n');
+            };
+
+            ws.onerror = (err) => {
+                term.write('\r\n\x1b[31m[Connection Error]\x1b[0m\r\n');
+            };
+
+            // Terminal -> WebSocket
+            term.onData(data => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(data);
+                }
+            });
+
+            // Handle Resize
+            function sendResize() {
+                if (ws.readyState === WebSocket.OPEN) {
+                    const dims = fitAddon.proposeDimensions();
+                    if (dims) {
+                        ws.send(JSON.stringify({
+                            type: 'resize',
+                            cols: dims.cols,
+                            rows: dims.rows
+                        }));
+                        fitAddon.fit();
+                    }
+                }
+            }
+
+            window.addEventListener('resize', () => {
+                fitAddon.fit();
+                sendResize();
+            });
+        });
+    </script>
+</body>
+</html>

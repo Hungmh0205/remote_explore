@@ -3,12 +3,13 @@ import shutil
 import tempfile
 import zipfile
 import secrets
-from typing import Dict
+import io
+from typing import Dict, Generator, Tuple
 from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Query, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..path_utils import resolve_path
@@ -16,6 +17,63 @@ from ..db import query_all, execute, query_one
 import hashlib
 from ..config import settings
 import stat as _stat
+
+import asyncio
+from ..config import settings
+import stat as _stat
+from .. import image_utils
+
+# --- Constants & Config ---
+SEARCH_BLACKLIST = {
+    "node_modules", ".git", "venv", ".venv", "__pycache__", 
+    "$RECYCLE.BIN", "System Volume Information", ".idea", ".vscode"
+}
+THUMB_CACHE_DIR = os.path.join(tempfile.gettempdir(), "rfe_thumbs")
+os.makedirs(THUMB_CACHE_DIR, exist_ok=True)
+
+router = APIRouter()
+
+
+def _get_thumb_path(abs_path: str) -> str:
+    """Returns a unique cached path for a file's thumbnail."""
+    mtime = os.path.getmtime(abs_path)
+    # Hash includes path and mtime to handle file updates
+    h = hashlib.md5(f"{abs_path}{mtime}".encode()).hexdigest()
+    return os.path.join(THUMB_CACHE_DIR, f"{h}.jpg")
+
+
+@router.get("/thumb")
+async def get_thumbnail(path: str):
+    """Generates or returns a cached thumbnail for an image (Async/Non-blocking)."""
+    allowed, abs_path = resolve_path(path)
+    if not allowed or not os.path.isfile(abs_path):
+        raise HTTPException(status_code=404)
+    
+    # Check cache first (fast I/O)
+    cache_path = _get_thumb_path(abs_path)
+    if os.path.exists(cache_path):
+        return FileResponse(cache_path)
+    
+    # If no pool initialized (e.g. startup failed or dev mode), fallback to raw
+    if not image_utils.process_pool:
+        return FileResponse(abs_path)
+
+    # Offload to worker process
+    loop = asyncio.get_running_loop()
+    # run_in_executor(executor, func, *args)
+    success = await loop.run_in_executor(
+        image_utils.process_pool,
+        image_utils.cpu_bound_generate_thumb,
+        abs_path,
+        cache_path
+    )
+    
+    if success:
+        return FileResponse(cache_path)
+    else:
+        # If resizing failed (e.g. PIL missing in worker, or corrupt file), return original
+        return FileResponse(abs_path)
+
 
 
 def _detect_windows_drives() -> List[str]:
@@ -31,7 +89,78 @@ def _detect_windows_drives() -> List[str]:
 		return []
 
 
-router = APIRouter()
+# --- Zip Streaming Helper ---
+def generate_zip_stream(files_to_zip: List[Tuple[str, str]]) -> Generator[bytes, None, None]:
+	"""
+	Generates a zip stream byte by byte.
+	files_to_zip: List of (absolute_system_path, internal_zip_path)
+	"""
+	mem_file = io.BytesIO()
+	# Create a ZipFile object that writes to the in-memory byte buffer
+	with zipfile.ZipFile(mem_file, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+		for abs_path, arc_name in files_to_zip:
+			# Ensure we are reading a file
+			if not os.path.isfile(abs_path):
+				continue
+			
+			# Create a ZipInfo object to handle attributes properly
+			try:
+				z_info = zipfile.ZipInfo.from_file(abs_path, arc_name)
+				z_info.compress_type = zipfile.ZIP_DEFLATED
+			except OSError:
+				# Skip files that might have permission issues or vanished
+				continue
+
+			# Open the source file and the destination stream within the zip
+			try:
+				with open(abs_path, "rb") as src, zf.open(z_info, "w") as dest:
+					while True:
+						chunk = src.read(64 * 1024)  # Read in 64KB chunks
+						if not chunk:
+							break
+						dest.write(chunk)
+						
+						# Yield compressed data available in the buffer so far
+						mem_file.seek(0)
+						yield mem_file.read()
+						mem_file.seek(0)
+						mem_file.truncate(0)
+			except Exception:
+				# If read fails (permission/lock), skip this file but keep streaming
+				pass
+
+	# Finish the zip file (write central directory)
+	mem_file.seek(0)
+	yield mem_file.read()
+
+
+def _collect_files_recursive(abs_base: str, root_arcname: str = "") -> List[Tuple[str, str]]:
+	"""Helper to walk a directory and return list of (abs, rel) for zipping."""
+	collected = []
+	if os.path.isfile(abs_base):
+		# Single file case
+		arcname = root_arcname if root_arcname else os.path.basename(abs_base)
+		collected.append((abs_base, arcname))
+	elif os.path.isdir(abs_base):
+		# Directory case
+		if not root_arcname:
+			root_arcname = os.path.basename(abs_base.rstrip("/\\"))
+		for root, dirs, files in os.walk(abs_base):
+			for fname in files:
+				full_path = os.path.join(root, fname)
+				# Calculate relative path from the base directory
+				rel_path = os.path.relpath(full_path, start=os.path.dirname(abs_base))
+				# Construct arcname ensuring root folder name is preserved if needed
+				# If abs_base is C:\Users\Docs and we zip it, we usually want "Docs\..." inside
+				# os.path.relpath(C:\Users\Docs\file.txt, start=C:\Users) -> Docs\file.txt
+				
+				# However, to match previous behavior simpler:
+				# If we are zipping "folder", we want "folder/file.txt"
+				# rel_path calculated from dirname(abs_base) usually gives that.
+				collected.append((full_path, rel_path))
+	return collected
+
+
 # (Search endpoint removed as per user request)
 
 # ---------------- Pins Endpoints ----------------
@@ -76,7 +205,7 @@ _UNDO_STORE: Dict[str, dict] = {}
 
 
 @router.get("/list", response_model=List[Entry])
-def list_dir(path: str = Query("")):
+def list_dir(path: str = Query(""), only_dirs: bool = False):
 	allowed, abs_dir = resolve_path(path or ".")
 	if not allowed:
 		raise HTTPException(status_code=403, detail="Path not allowed")
@@ -87,6 +216,10 @@ def list_dir(path: str = Query("")):
 		with os.scandir(abs_dir) as it:
 			for entry in it:
 				try:
+					# If only_dirs requested, skip files early
+					if only_dirs and not entry.is_dir(follow_symlinks=False):
+						continue
+
 					stat = entry.stat(follow_symlinks=False)
 				except Exception:
 					continue
@@ -135,6 +268,77 @@ def open_inline(path: str):
 	return FileResponse(abs_file)
 
 
+class SearchBody(BaseModel):
+	path: str
+	query: str
+	max_depth: int = 5
+
+
+@router.post("/search", response_model=List[Entry])
+def search_files(body: SearchBody):
+	allowed, abs_path = resolve_path(body.path)
+	if not allowed:
+		raise HTTPException(status_code=403, detail="Path not allowed")
+	if not os.path.isdir(abs_path):
+		raise HTTPException(status_code=404, detail="Directory not found")
+
+	results: List[Entry] = []
+	query_lower = body.query.lower()
+	max_count = 500  # Hard limit to prevent payload explosion
+	
+	# root_depth: counting separate headers from the start path
+	start_depth = abs_path.rstrip(os.sep).count(os.sep)
+
+	for root, dirs, files in os.walk(abs_path):
+		# OPTIMIZATION: Filter blacklisted directories to skip them entirely
+		dirs[:] = [d for d in dirs if d not in SEARCH_BLACKLIST]
+
+		# Check depth
+		current_depth = root.rstrip(os.sep).count(os.sep)
+		if current_depth - start_depth > body.max_depth:
+			# Don't go deeper, clear dirs so os.walk doesn't descend further
+			del dirs[:]
+			continue
+		
+		# Check files
+		for fname in files:
+			if query_lower in fname.lower():
+				full_path = os.path.join(root, fname)
+				try:
+					stat = os.stat(full_path)
+					results.append(Entry(
+						name=fname,
+						path=full_path,
+						is_dir=False,
+						size=int(stat.st_size),
+						modified=float(stat.st_mtime)
+					))
+				except Exception:
+					continue
+				if len(results) >= max_count:
+					return results
+		
+		# Check folders (optional, if we want to return matching folders too)
+		for dname in dirs:
+			if query_lower in dname.lower():
+				full_path = os.path.join(root, dname)
+				try:
+					stat = os.stat(full_path)
+					results.append(Entry(
+						name=dname,
+						path=full_path,
+						is_dir=True,
+						size=0,
+						modified=float(stat.st_mtime)
+					))
+				except Exception:
+					continue
+				if len(results) >= max_count:
+					return results
+
+	return sorted(results, key=lambda e: (not e.is_dir, e.name.lower()))
+
+
 @router.get("/zip")
 def download_zip(path: str):
 	"""Zip a folder (or single file) and stream as ZIP download."""
@@ -143,21 +347,16 @@ def download_zip(path: str):
 		raise HTTPException(status_code=403, detail="Path not allowed")
 	if not os.path.exists(abs_path):
 		raise HTTPException(status_code=404, detail="Path not found")
+	
 	basename = os.path.basename(abs_path.rstrip("/\\")) or "archive"
-	# create temp zip
-	tmp_dir = tempfile.mkdtemp(prefix="rfe_")
-	zip_path = os.path.join(tmp_dir, f"{basename}.zip")
-	with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-		if os.path.isdir(abs_path):
-			for root, dirs, files in os.walk(abs_path):
-				for fname in files:
-					full = os.path.join(root, fname)
-					rel = os.path.relpath(full, start=os.path.dirname(abs_path))
-					zf.write(full, arcname=rel)
-		else:
-			zf.write(abs_path, arcname=basename)
-	# return file and schedule cleanup by OS (temp dir)
-	return FileResponse(zip_path, filename=f"{basename}.zip")
+	files_to_zip = _collect_files_recursive(abs_path)
+	
+	response = StreamingResponse(
+		generate_zip_stream(files_to_zip),
+		media_type="application/zip"
+	)
+	response.headers["Content-Disposition"] = f'attachment; filename="{basename}.zip"'
+	return response
 
 
 class MultipleZipBody(BaseModel):
@@ -170,36 +369,26 @@ def download_multiple_zip(body: MultipleZipBody):
 	if not body.paths:
 		raise HTTPException(status_code=400, detail="No paths provided")
 	
-	# Validate all paths
-	valid_paths = []
+	# Validate paths and build list
+	files_to_zip = []
 	for path in body.paths:
 		allowed, abs_path = resolve_path(path)
 		if not allowed:
 			raise HTTPException(status_code=403, detail=f"Path not allowed: {path}")
 		if not os.path.exists(abs_path):
 			raise HTTPException(status_code=404, detail=f"Path not found: {path}")
-		valid_paths.append(abs_path)
+		
+		# For multiple selections, we zip them at the root of the archive
+		# e.g. selecting C:\A\Folder1 and C:\A\File.txt
+		# Archive: /Folder1/... and /File.txt
+		files_to_zip.extend(_collect_files_recursive(abs_path, root_arcname=os.path.basename(abs_path)))
 	
-	# Create temp zip
-	tmp_dir = tempfile.mkdtemp(prefix="rfe_")
-	zip_path = os.path.join(tmp_dir, "selected_files.zip")
-	
-	with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-		for abs_path in valid_paths:
-			basename = os.path.basename(abs_path.rstrip("/\\"))
-			if os.path.isdir(abs_path):
-				# Add folder contents
-				for root, dirs, files in os.walk(abs_path):
-					for fname in files:
-						full = os.path.join(root, fname)
-						rel = os.path.relpath(full, start=abs_path)
-						arcname = f"{basename}/{rel}"
-						zf.write(full, arcname=arcname)
-			else:
-				# Add single file
-				zf.write(abs_path, arcname=basename)
-	
-	return FileResponse(zip_path, filename="selected_files.zip")
+	response = StreamingResponse(
+		generate_zip_stream(files_to_zip),
+		media_type="application/zip"
+	)
+	response.headers["Content-Disposition"] = 'attachment; filename="selected_files.zip"'
+	return response
 
 
 @router.post("/upload")
@@ -472,34 +661,24 @@ def share_download_multiple_zip(body: ShareMultipleZipBody):
 	if not body.paths:
 		raise HTTPException(status_code=400, detail="No paths provided")
 	
-	# Validate all paths within share scope
-	valid_paths = []
+	files_to_zip = []
 	for rel_path in body.paths:
 		abs_path = _resolve_share_path(body.token, rel_path)
 		if not abs_path or not os.path.exists(abs_path):
 			raise HTTPException(status_code=404, detail=f"Path not found: {rel_path}")
-		valid_paths.append(abs_path)
+		
+		# Collect files for this selection
+		# We want the structure in zip to match the selection structure relative to the share root?
+		# Or just flat/relative to the selection?
+		# Strategy: maintain relative path from the *parent* of the selected item to avoid Deep nesting if picking deep files.
+		files_to_zip.extend(_collect_files_recursive(abs_path, root_arcname=os.path.basename(abs_path)))
 	
-	# Create temp zip
-	tmp_dir = tempfile.mkdtemp(prefix="rfe_share_")
-	zip_path = os.path.join(tmp_dir, "selected_files.zip")
-	
-	with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-		for abs_path in valid_paths:
-			basename = os.path.basename(abs_path.rstrip("/\\"))
-			if os.path.isdir(abs_path):
-				# Add folder contents
-				for root, dirs, files in os.walk(abs_path):
-					for fname in files:
-						full = os.path.join(root, fname)
-						rel = os.path.relpath(full, start=abs_path)
-						arcname = f"{basename}/{rel}"
-						zf.write(full, arcname=arcname)
-			else:
-				# Add single file
-				zf.write(abs_path, arcname=basename)
-	
-	return FileResponse(zip_path, filename="selected_files.zip")
+	response = StreamingResponse(
+		generate_zip_stream(files_to_zip),
+		media_type="application/zip"
+	)
+	response.headers["Content-Disposition"] = 'attachment; filename="selected_files.zip"'
+	return response
 
 
 @router.post("/undo")
