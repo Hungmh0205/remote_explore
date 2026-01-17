@@ -906,3 +906,42 @@ def copy_path(body: CopyBody):
 	return {"ok": True, "path": target}
 
 
+class UnzipRequest(BaseModel):
+	path: str
+
+
+@router.post("/unzip")
+async def unzip_file(req: UnzipRequest):
+	"""Extracts a zip file to the same directory."""
+	allowed, abs_path = resolve_path(req.path)
+	if not allowed or not os.path.isfile(abs_path):
+		raise HTTPException(status_code=404, detail="File not found or access denied")
+	
+	ext = abs_path.lower()
+	if not (ext.endswith(".zip") or ext.endswith(".7z") or ext.endswith(".rar") or ext.endswith(".tar") or ext.endswith(".gz")):
+		raise HTTPException(status_code=400, detail="Unsupported archive format")
+
+	parent_dir = os.path.dirname(abs_path)
+	
+	# Run in executor to avoid blocking
+	loop = asyncio.get_running_loop()
+	try:
+		def _extract():
+			if abs_path.lower().endswith('.zip'):
+				with zipfile.ZipFile(abs_path, 'r') as zip_ref:
+					zip_ref.extractall(parent_dir)
+			elif abs_path.lower().endswith('.7z'):
+				import py7zr
+				with py7zr.SevenZipFile(abs_path, 'r') as archive:
+					archive.extractall(parent_dir)
+			else:
+				# Try patool for rar and others (requires system tools like rar/unrar/7z)
+				import patoolib
+				patoolib.extract_archive(abs_path, outdir=parent_dir)
+		
+		await loop.run_in_executor(None, _extract)
+		return {"status": "success", "message": f"Extracted to {parent_dir}"}
+	except Exception as e:
+		raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+
+

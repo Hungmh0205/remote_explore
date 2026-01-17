@@ -12,7 +12,7 @@ from .routers import console as console_router
 from .routers import monitoring as monitoring_router
 from .routers import watcher as watcher_router
 from .auth import router as auth_router
-from .routers import services, processes, automation
+from .routers import services, processes, automation, logs
 from .middlewares import AuthMiddleware
 from .db import init_db
 from . import image_utils
@@ -21,6 +21,8 @@ from . import image_utils
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 	# Startup
+	from .logging_config import setup_logging
+	setup_logging()
 	image_utils.init_pool()
 	init_db()
 	yield
@@ -48,6 +50,7 @@ def create_app() -> FastAPI:
 	app.include_router(auth_router, prefix="/api")
 	app.include_router(admin_router.router, prefix="/api")
 	app.include_router(console_router.router, prefix="/api")
+	app.include_router(logs.router, prefix="/api")
 	app.include_router(monitoring_router.router, prefix="/api")
 	app.include_router(watcher_router.router, prefix="/api")
 	app.include_router(services.router, prefix="/api")

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Remote File Explorer</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background: #f3f4f6;
+            color: #1f2937;
+            transition: background 0.3s, color 0.3s;
+        }
+
+        .card {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 360px;
+            text-align: center;
+        }
+
+        h1 {
+            margin-top: 0;
+            font-size: 1.5rem;
+            color: #3b82f6;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 16px 0;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input:focus {
+            border-color: #3b82f6;
+            ring: 2px solid #3b82f6;
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #2563eb;
+        }
+
+        button:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+
+        .error {
+            color: #dc2626;
+            font-size: 14px;
+            margin-top: 10px;
+            min-height: 20px;
+        }
+
+        /* Dark Mode */
+        @media (prefers-color-scheme: dark) {
+            body {
+                background: #111827;
+                color: #f3f4f6;
+            }
+
+            .card {
+                background: #1f2937;
+                border: 1px solid #374151;
+            }
+
+            input {
+                background: #374151;
+                border-color: #4b5563;
+                color: white;
+            }
+
+            input:focus {
+                border-color: #60a5fa;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <h1>🔐 Remote Access</h1>
+        <form id="loginForm">
+            <input type="password" id="password" placeholder="Enter Password" required autofocus>
+            <button type="submit" id="btn">Unlock</button>
+            <div id="error" class="error"></div>
+        </form>
+    </div>
+    <script>
+        const form = document.getElementById('loginForm');
+        const pass = document.getElementById('password');
+        const btn = document.getElementById('btn');
+        const err = document.getElementById('error');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            btn.disabled = true;
+            btn.innerText = 'Verifying...';
+            err.innerText = '';
+
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: pass.value })
+                });
+
+                if (res.ok) {
+                    btn.innerText = 'Success!';
+                    window.location.href = '/index.html'; // Redirect to home
+                } else {
+                    const data = await res.json();
+                    throw new Error(data.detail || 'Access Denied');
+                }
+            } catch (error) {
+                err.innerText = error.message;
+                btn.disabled = false;
+                btn.innerText = 'Unlock';
+            }
+        });
+    </script>
+</body>
+
+</html>

@@ -5,7 +5,7 @@ import bcrypt
 from .config import settings
 
 
-SESSION_COOKIE = "rfe_session"
+SESSION_COOKIE = "rfe_session_v2"
 
 
 class LoginBody(BaseModel):

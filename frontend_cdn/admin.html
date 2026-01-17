@@ -344,6 +344,10 @@
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <script src="https://unpkg.com/axios@1.7.7/dist/axios.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- xterm.js -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
 </head>
 
 <body>
@@ -405,9 +409,43 @@
     <div class="tabs">
       <div class="tab" :class="{active: tab === 'services'}" @click="tab = 'services'">Services</div>
       <div class="tab" :class="{active: tab === 'processes'}" @click="tab = 'processes'">Processes</div>
+      <div class="tab" :class="{active: tab === 'terminal'}" @click="tab = 'terminal'">Terminal</div>
+      <div class="tab" :class="{active: tab === 'logs'}" @click="tab = 'logs'">Logs</div>
       <div class="tab" :class="{active: tab === 'performance'}" @click="tab = 'performance'">Performance</div>
       <div class="tab" :class="{active: tab === 'automation'}" @click="tab = 'automation'">Automation Hub</div>
       <div class="tab" :class="{active: tab === 'database'}" @click="tab = 'database'">Database</div>
+    </div>
+
+    <!-- Terminal Tab -->
+    <div v-show="tab === 'terminal'" style="height: 600px; display:flex; flex-direction:column;">
+      <div class="toolbar" style="margin-bottom: 8px;">
+        <h3>Web Terminal</h3>
+        <span class="muted" style="margin-left: 10px; font-size: 0.9em;">(cmd.exe / powershell)</span>
+        <span style="flex:1"></span>
+        <button class="btn-sm" @click="fitTerminal">Fit Window</button>
+        <button class="btn-sm btn-danger" @click="restartTerminal">Reconnect</button>
+      </div>
+      <div id="terminal-container"
+        style="flex:1; background: #000; padding: 4px; border-radius: 4px; overflow: hidden; border: 1px solid #374151;">
+      </div>
+    </div>
+
+    <!-- Logs Tab -->
+    <div v-show="tab === 'logs'" style="height: 600px; display:flex; flex-direction:column;">
+      <div class="toolbar"
+        style="margin-bottom: 8px; border-bottom:1px solid #333; background:#252526; padding:8px; display:flex; align-items:center">
+        <h3 style="margin:0; color:#ccc">Live Logs</h3>
+        <span style="flex:1"></span>
+        <div style="display:flex; gap:8px">
+          <label style="color:#ccc; font-size:12px; display:flex; align-items:center; gap:4px"><input type="checkbox"
+              v-model="logs.autoScroll"> Auto-scroll</label>
+          <button class="btn-sm" @click="logs.content = ''">Clear</button>
+          <button class="btn-sm" :class="logs.connected ? 'btn-danger' : 'btn-success'" @click="toggleLogs">{{
+            logs.connected ? 'Disconnect' : 'Connect' }}</button>
+        </div>
+      </div>
+      <pre ref="logContainer"
+        style="flex:1; background:#1e1e1e; color:#d4d4d4; padding:12px; margin:0; overflow:auto; font-family:Consolas, monospace; font-size:13px; line-height:1.4; white-space:pre-wrap; border:1px solid #374151; border-radius:4px">{{ logs.content }}</pre>
     </div>
 
     <!-- Services Tab -->
@@ -677,7 +715,18 @@
 
   </div>
   <script>
-    const { createApp, ref, onMounted, computed, watch, nextTick } = Vue
+    axios.interceptors.response.use(
+      response => response,
+      error => {
+        if (error.response && error.response.status === 401) {
+          window.location.href = '/login.html';
+        }
+        return Promise.reject(error);
+      }
+    );
+  </script>
+  <script>
+    const { createApp, ref, onMounted, computed, watch, nextTick, reactive } = Vue
     createApp({
       setup() {
         const tab = ref('automation')
@@ -712,6 +761,52 @@
         )))
 
         const theme = ref('light')
+
+        // Terminal Refs
+        let term = null
+        let fitAddon = null
+        let ws = null
+
+        // Logs
+        const logs = reactive({ content: '', connected: false, autoScroll: true })
+        let logWs = null
+        const logContainer = ref(null)
+
+        function toggleLogs() {
+          if (logs.connected) {
+            if (logWs) logWs.close()
+            logs.connected = false
+          } else {
+            initLogs()
+          }
+        }
+
+        function initLogs() {
+          if (logs.connected) return
+          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const wsUrl = `${protocol}//${window.location.host}/api/ws/logs`;
+          logWs = new WebSocket(wsUrl);
+          logWs.onopen = () => {
+            logs.connected = true
+            logs.content += '[Logs Connected]\n'
+          }
+          logWs.onmessage = (ev) => {
+            logs.content += ev.data
+            if (logs.autoScroll && logContainer.value) {
+              nextTick(() => {
+                logContainer.value.scrollTop = logContainer.value.scrollHeight
+              })
+            }
+          }
+          logWs.onclose = () => {
+            logs.connected = false
+            logs.content += '\n[Logs Disconnected]'
+          }
+          logWs.onerror = () => {
+            logs.connected = false
+            logs.content += '\n[Connection Error]'
+          }
+        }
 
         // --- Loaders ---
         // --- Charts ---
@@ -749,6 +844,7 @@
           })
         }
 
+        // Watchers
         watch(tab, (newTab) => {
           if (newTab === 'performance') initCharts()
           else {
@@ -757,6 +853,23 @@
               Object.values(charts).forEach(c => c?.destroy())
               charts = {}
             }
+          }
+          if (newTab === 'services') loadServices();
+          // processes is polling based, but we could trigger one load
+          if (newTab === 'processes') loadProcesses();
+          // Initialize terminal on first switch
+          if (newTab === 'terminal') {
+            // Use nextTick to ensure container is rendered
+            nextTick(() => {
+              // Assuming 'this' context or 'app' is available, or pass it
+              // For setup() context, 'this' is not the component instance.
+              // You'd need to call initTerminal directly or via a ref.
+              // If initTerminal is a function in setup(), call it directly.
+              initTerminal();
+            });
+          }
+          if (newTab === 'logs') {
+            initLogs()
           }
         })
 
@@ -934,6 +1047,90 @@
           )
         })
 
+        // --- Terminal Logic ---
+        function initTerminal() {
+          if (term) return; // Already initialized
+
+          // Create xterm instance
+          term = new Terminal({
+            cursorBlink: true,
+            fontSize: 14,
+            fontFamily: 'Consolas, "Courier New", monospace',
+            theme: {
+              background: '#1e1e1e',
+              foreground: '#f0f0f0'
+            }
+          });
+
+          // Load Fit Addon
+          fitAddon = new FitAddon.FitAddon();
+          term.loadAddon(fitAddon);
+
+          // Open terminal in container
+          term.open(document.getElementById('terminal-container'));
+          fitAddon.fit();
+
+          // Handle user input
+          term.onData(data => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(data);
+            }
+          });
+
+          // Handle resize
+          window.addEventListener('resize', () => fitTerminal());
+
+          connectTerminal();
+        }
+
+        function connectTerminal() {
+          if (ws) {
+            ws.close();
+          }
+
+          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const wsUrl = `${protocol}//${window.location.host}/api/ws/console`;
+
+          ws = new WebSocket(wsUrl);
+
+          ws.onopen = () => {
+            term.write('\r\n\x1b[32m[Connected to Server Terminal]\x1b[0m\r\n');
+            fitTerminal();
+          };
+
+          ws.onmessage = (event) => {
+            term.write(event.data);
+          };
+
+          ws.onclose = () => {
+            term.write('\r\n\x1b[31m[Connection Closed]\x1b[0m\r\n');
+          };
+
+          ws.onerror = (err) => {
+            term.write('\r\n\x1b[31m[Connection Error]\x1b[0m\r\n');
+          };
+        }
+
+        function fitTerminal() {
+          if (fitAddon) {
+            fitAddon.fit();
+            // Send resize command to backend if needed (console.py supports JSON resize)
+            if (ws && ws.readyState === WebSocket.OPEN && term) {
+              const dims = {
+                type: 'resize',
+                cols: term.cols,
+                rows: term.rows
+              };
+              ws.send(JSON.stringify(dims));
+            }
+          }
+        }
+
+        function restartTerminal() {
+          if (term) term.clear();
+          connectTerminal();
+        }
+
         function formatBytes(bytes) {
           if (bytes === 0) return '0 B';
           const k = 1024;
@@ -980,6 +1177,10 @@
           tab, summary, stats, netSpeed, shares, pins, services, serviceFilter, processes, processFilter,
           apps, backgroundProcesses,
           filteredServices, theme, scripts, jobHistory, showModal, currentJob, logBody,
+          // Terminal
+          initTerminal, fitTerminal, restartTerminal,
+          // Logs
+          logs, toggleLogs, logContainer,
           loadServices, loadProcesses, loadScripts, svcAction, killProcess, delShare, delPin, delJob,
           runScript, openJob, closeModal,
           formatBytes, formatTime, getUsageClass, toggleTheme

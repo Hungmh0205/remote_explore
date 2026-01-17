@@ -897,6 +897,7 @@
         <div class="menu-item" @click="cmCopy(menu.item)">Copy</div>
         <div class="menu-item" @click="cmCut(menu.item)">Cut</div>
         <div class="menu-item" v-if="!menu.item?.is_dir" @click="cmDownload(menu.item)">Download</div>
+        <div class="menu-item" v-if="isArchive(menu.item)" @click="cmUnzip(menu.item)">Extract Here</div>
         <div class="menu-item" v-if="menu.item?.is_dir" @click="cmZipDownload(menu.item)">Download (ZIP)</div>
         <div class="menu-item" v-if="menu.item?.is_dir" @click="cmZipDownload(menu.item, true)">Download (Fast ZIP)
         </div>
@@ -1049,6 +1050,16 @@
     </div>
   </div>
   <script>
+    axios.interceptors.response.use(
+      response => response,
+      error => {
+        if (error.response && error.response.status === 401) {
+          window.location.href = '/login.html';
+        }
+        return Promise.reject(error);
+      }
+    );
+
     const { createApp, ref, onMounted, reactive, computed, nextTick, watch } = Vue
     createApp({
       setup() {
@@ -1545,6 +1556,23 @@
         }
         async function cmRename(item) { await promptRename(item) }
         async function cmDelete(item) { await deletePath(item) }
+        async function cmUnzip(item) {
+          if (!item) return
+          if (!confirm(`Extract '${item.name}' here?`)) return
+          try {
+            const res = await axios.post('/api/unzip', { path: item.path })
+            alert(res.data.message)
+            await load(currentPath.value)
+          } catch (e) {
+            alert('Extraction failed: ' + (e.response?.data?.detail || e.message))
+          }
+        }
+        function isArchive(item) {
+          if (!item || item.is_dir) return false
+          const name = item.name.toLowerCase()
+          return name.endsWith('.zip') || name.endsWith('.7z') || name.endsWith('.rar') || name.endsWith('.tar') || name.endsWith('.gz')
+        }
+
         async function createFolder() {
           const name = await showInput('New Folder Name')
           if (!name) return
@@ -1723,7 +1751,7 @@
             }
           })
         })
-        return { currentPath, entries, navigate, goUp, openDir, downloadFile, downloadSelected, onUpload, deletePath, formatSize, formatTime, openContextMenu, openBlankMenu, menu, cmOpen, cmEdit, cmCopy, cmCut, cmDownload, cmZipDownload, cmRename, cmDelete, clipboard, pasteHere, createFolder, createFile, editor, saveEditor, closeEditor, isTextFile, isSelected, onRowClick, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, undoToken, undo, pins, drives, displayName, pin, unpin, onSidebarDragOver, onSidebarDragLeave, onSidebarDrop, share, openShare, closeShare, createShareLink, copyShare, formatExpire, selected, filterText, page, pageSize, paginatedEntries, totalPages, pathSegments, theme, toggleTheme, preview, applyEditorReadonly, propsModal, openProperties, closeProperties, propsModifiedLocal, onPropsModifiedChange, saveProperties, onPreviewError, performSearch, viewMode, toggleViewMode, deepSearch, stats, uploading, wsStatus, isImage, inputModal, resolveInput, newMenu, promptRename, showDropOverlay }
+        return { currentPath, entries, navigate, goUp, openDir, downloadFile, downloadSelected, onUpload, deletePath, formatSize, formatTime, openContextMenu, openBlankMenu, menu, cmOpen, cmEdit, cmCopy, cmCut, cmDownload, cmZipDownload, cmRename, cmDelete, cmUnzip, isArchive, clipboard, pasteHere, createFolder, createFile, editor, saveEditor, closeEditor, isTextFile, isSelected, onRowClick, onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, undoToken, undo, pins, drives, displayName, pin, unpin, onSidebarDragOver, onSidebarDragLeave, onSidebarDrop, share, openShare, closeShare, createShareLink, copyShare, formatExpire, selected, filterText, page, pageSize, paginatedEntries, totalPages, pathSegments, theme, toggleTheme, preview, applyEditorReadonly, propsModal, openProperties, closeProperties, propsModifiedLocal, onPropsModifiedChange, saveProperties, onPreviewError, performSearch, viewMode, toggleViewMode, deepSearch, stats, uploading, wsStatus, isImage, inputModal, resolveInput, newMenu, promptRename, showDropOverlay }
       }
     }).mount('#app')
   </script>
