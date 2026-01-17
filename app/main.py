@@ -12,7 +12,7 @@ from .routers import console as console_router
 from .routers import monitoring as monitoring_router
 from .routers import watcher as watcher_router
 from .auth import router as auth_router
-from .routers import services, processes
+from .routers import services, processes, automation
 from .middlewares import AuthMiddleware
 from .db import init_db
 from . import image_utils
@@ -52,6 +52,7 @@ def create_app() -> FastAPI:
 	app.include_router(watcher_router.router, prefix="/api")
 	app.include_router(services.router, prefix="/api")
 	app.include_router(processes.router, prefix="/api")
+	app.include_router(automation.router, prefix="/api")
 
 	# Serve CDN Vue frontend
 	app.mount("/", StaticFiles(directory=str((__file__[:__file__.rfind("\\app\\")] + "\\frontend_cdn").replace("/","\\")), html=True), name="static")

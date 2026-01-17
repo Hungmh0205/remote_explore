@@ -1,365 +1,781 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Admin - Remote File Explorer</title>
-    <style>
-      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, Noto Sans; margin: 0; }
-      .app { padding: 16px; max-width: 1200px; margin: 0 auto; }
-      h2 { margin: 12px 0; }
-      h3 { margin: 8px 0; font-size: 1.1em; color: #4b5563; }
-      table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-      th, td { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; text-align: left; vertical-align: middle; }
-      tbody tr:hover { background: #f8fafc; }
-      .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0 24px 0; }
-      .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background: #fff; }
-      .muted { color:#6b7280; font-size:12px; }
-      .toolbar { display:flex; gap:8px; align-items:center; margin: 8px 0; }
-      button { padding:6px 10px; cursor:pointer; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; transition: background 0.15s ease, transform 0.02s ease; }
-      button:hover { background: #e9ebef; }
-      button:active { background: #e1e4e8; transform: translateY(1px); }
-      .btn-sm { padding: 4px 8px; font-size: 12px; }
-      .btn-danger { color: #dc2626; background: #fee2e2; border-color: #fca5a5; }
-      .btn-danger:hover { background: #fecaca; }
-      .btn-success { color: #16a34a; background: #dcfce7; border-color: #86efac; }
-      .btn-success:hover { background: #bbf7d0; }
-      .status-running { color: #16a34a; font-weight: bold; }
-      .status-stopped { color: #dc2626; }
-      .tabs { display: flex; gap: 8px; border-bottom: 1px solid #e5e7eb; margin-bottom: 16px; }
-      .tab { padding: 8px 16px; cursor: pointer; border-radius: 4px 4px 0 0; }
-      .tab.active { background: #f3f4f6; font-weight: bold; border-bottom: 2px solid #2563eb; }
-      .progress-bg { background: #e5e7eb; height: 8px; border-radius: 4px; overflow: hidden; width: 100%; }
-      .progress-fill { background: #2563eb; height: 100%; transition: width 0.3s; }
-      .progress-fill.high { background: #dc2626; }
-      .progress-fill.med { background: #eab308; }
-      
-      a { color:#2563eb; text-decoration:none; }
-      /* Dark mode */
-      body.dark { background: #0f172a; color: #e5e7eb; }
-      body.dark th, body.dark td { border-color: #1f2937 }
-      body.dark tbody tr:hover { background: #0b1220 }
-      body.dark .card { background: #0f172a; border-color: #1f2937 }
-      body.dark button { background: #0b1220; color: #e5e7eb; border: 1px solid #1f2937 }
-      body.dark button:hover { background: #0e1526 }
-      body.dark button:active { background: #0a1120 }
-      body.dark .tab.active { background: #1e293b; border-bottom-color: #3b82f6; }
-      body.dark .progress-bg { background: #374151; }
-    </style>
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://unpkg.com/axios@1.7.7/dist/axios.min.js"></script>
-  </head>
-  <body>
-    <div id="app" class="app">
-      <div class="toolbar">
-        <a href="/index.html">← Back to Explorer</a>
-        <span style="flex:1"></span>
-        <button @click="toggleTheme">{{ theme === 'dark' ? 'Light' : 'Dark' }}</button>
-      </div>
 
-      <!-- Dashboard Cards -->
-      <h2>System Dashboard</h2>
-      <div class="cards">
-        <div class="card">
-            <div class="muted">CPU Usage</div>
-            <div style="font-size:24px; font-weight:700">{{ stats.cpu_percent }}%</div>
-            <div class="progress-bg"><div class="progress-fill" :class="getUsageClass(stats.cpu_percent)" :style="{width: stats.cpu_percent + '%'}"></div></div>
-        </div>
-        <div class="card">
-            <div class="muted">RAM Usage</div>
-            <div style="font-size:24px; font-weight:700">{{ stats.memory_percent }}%</div>
-            <div class="muted">{{ formatBytes(stats.memory_used) }} / {{ formatBytes(stats.memory_total) }}</div>
-            <div class="progress-bg"><div class="progress-fill" :class="getUsageClass(stats.memory_percent)" :style="{width: stats.memory_percent + '%'}"></div></div>
-        </div>
-        <div class="card">
-            <div class="muted">Disk ({{ stats.disk_percent }}%)</div>
-             <div style="font-size:24px; font-weight:700">{{ formatBytes(stats.disk_free) }} Free</div>
-             <div class="muted">Total: {{ formatBytes(stats.disk_total) }}</div>
-        </div>
-        <div class="card">
-           <div class="muted">Shares / Pins</div>
-           <div style="font-size:24px; font-weight:700">{{ summary.shares }} / {{ summary.pins }}</div>
-        </div>
-      </div>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin - Remote File Explorer</title>
+  <style>
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, Noto Sans;
+      margin: 0;
+    }
 
-      <div class="tabs">
-        <div class="tab" :class="{active: tab === 'services'}" @click="tab = 'services'">Services</div>
-        <div class="tab" :class="{active: tab === 'processes'}" @click="tab = 'processes'">Processes</div>
-        <div class="tab" :class="{active: tab === 'database'}" @click="tab = 'database'">Database</div>
-      </div>
+    .app {
+      padding: 16px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
 
-      <!-- Services Tab -->
-      <div v-if="tab === 'services'">
-        <div class="toolbar">
-           <h3>Windows Services</h3>
-           <button class="btn-sm" @click="loadServices">Refresh</button>
-        </div>
-        <input type="text" v-model="serviceFilter" placeholder="Filter services..." style="padding:6px; margin-bottom:12px; width:200px; border:1px solid #ccc; border-radius:4px;">
-        <div style="max-height: 500px; overflow-y: auto;">
-          <table>
-            <thead>
-              <tr>
-                <th>Display Name</th>
-                <th>Name</th>
-                <th>Status</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="svc in filteredServices" :key="svc.name">
-                <td>{{ svc.display_name }}</td>
-                <td style="font-family: monospace; font-size: 0.9em;">{{ svc.name }}</td>
-                <td>
-                    <span :class="{'status-running': svc.status === 'running', 'status-stopped': svc.status === 'stopped'}">
-                        {{ svc.status }}
-                    </span>
-                </td>
-                <td>
-                  <button v-if="svc.status === 'running'" class="btn-sm btn-danger" @click="svcAction(svc.name, 'stop')">Stop</button>
-                  <button v-if="svc.status === 'stopped'" class="btn-sm btn-success" @click="svcAction(svc.name, 'start')">Start</button>
-                  <button v-if="svc.status === 'running'" class="btn-sm" @click="svcAction(svc.name, 'restart')">Restart</button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+    h2 {
+      margin: 12px 0;
+    }
 
-      <!-- Processes Tab -->
-      <div v-if="tab === 'processes'">
-         <div class="toolbar">
-            <h3>Top Processes (by RAM)</h3>
-            <button class="btn-sm" @click="loadProcesses">Refresh</button>
-         </div>
-         <table>
-            <thead>
-               <tr>
-                  <th>PID</th>
-                  <th>Name</th>
-                  <th>User</th>
-                  <th>Memory</th>
-                  <th>CPU</th>
-                  <th>Action</th>
-               </tr>
-            </thead>
-            <tbody>
-               <tr v-for="p in processes" :key="p.pid">
-                  <td style="font-family:monospace">{{ p.pid }}</td>
-                  <td>{{ p.name }}</td>
-                  <td>{{ p.username }}</td>
-                  <td>{{ p.memory_mb }} MB</td>
-                  <td>{{ p.cpu_percent }}%</td>
-                  <td>
-                     <button class="btn-sm btn-danger" @click="killProcess(p.pid)">Kill</button>
-                  </td>
-               </tr>
-            </tbody>
-         </table>
-      </div>
+    h3 {
+      margin: 8px 0;
+      font-size: 1.1em;
+      color: #4b5563;
+    }
 
-      <!-- Database Tab -->
-      <div v-if="tab === 'database'">
-          <h3>Shares</h3>
-          <div class="muted">Manage existing share links.</div>
-          <table>
-            <thead>
-              <tr>
-                <th>Token</th>
-                <th>Root</th>
-                <th>Readonly</th>
-                <th>Allow Download</th>
-                <th>Allow Edit</th>
-                <th>Expires</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="s in shares" :key="s.token">
-                <td style="font-family:ui-monospace">{{ s.token }}</td>
-                <td>{{ s.root }}</td>
-                <td>{{ s.readonly ? 'Yes' : 'No' }}</td>
-                <td>{{ s.allow_download ? 'Yes' : 'No' }}</td>
-                <td>{{ s.allow_edit ? 'Yes' : 'No' }}</td>
-                <td>{{ formatTime(s.expires_at) }}</td>
-                <td>
-                  <button @click="delShare(s.token)">Delete</button>
-                </td>
-              </tr>
-              <tr v-if="shares.length === 0"><td colspan="7" class="muted">No data</td></tr>
-            </tbody>
-          </table>
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20px;
+    }
 
-          <h3 style="margin-top:20px">Pins</h3>
-          <div class="muted">Pinned folders persisted in DB.</div>
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Path</th>
-                <th>Created</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="p in pins" :key="p.id">
-                <td>{{ p.id }}</td>
-                <td>{{ p.path }}</td>
-                <td>{{ formatTime(p.created_at) }}</td>
-                <td>
-                  <button @click="delPin(p.id)">Delete</button>
-                </td>
-              </tr>
-              <tr v-if="pins.length === 0"><td colspan="4" class="muted">No data</td></tr>
-            </tbody>
-          </table>
-      </div>
+    th,
+    td {
+      padding: 8px 10px;
+      border-bottom: 1px solid #f3f4f6;
+      text-align: left;
+      vertical-align: middle;
+    }
 
+    tbody tr:hover {
+      background: #f8fafc;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 12px 0 24px 0;
+    }
+
+    .card {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .muted {
+      color: #6b7280;
+      font-size: 12px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0;
+    }
+
+    button {
+      padding: 6px 10px;
+      cursor: pointer;
+      background: #f3f4f6;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      transition: background 0.15s ease, transform 0.02s ease;
+    }
+
+    button:hover {
+      background: #e9ebef;
+    }
+
+    button:active {
+      background: #e1e4e8;
+      transform: translateY(1px);
+    }
+
+    .btn-sm {
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+
+    .btn-danger {
+      color: #dc2626;
+      background: #fee2e2;
+      border-color: #fca5a5;
+    }
+
+    .btn-danger:hover {
+      background: #fecaca;
+    }
+
+    .btn-success {
+      color: #16a34a;
+      background: #dcfce7;
+      border-color: #86efac;
+    }
+
+    .btn-success:hover {
+      background: #bbf7d0;
+    }
+
+    .btn-primary {
+      color: #ffffff;
+      background: #2563eb;
+      border-color: #2563eb;
+    }
+
+    .btn-primary:hover {
+      background: #1d4ed8;
+    }
+
+    .status-running {
+      color: #16a34a;
+      font-weight: bold;
+    }
+
+    .status-stopped {
+      color: #dc2626;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid #e5e7eb;
+      margin-bottom: 16px;
+    }
+
+    .tab {
+      padding: 8px 16px;
+      cursor: pointer;
+      border-radius: 4px 4px 0 0;
+    }
+
+    .tab.active {
+      background: #f3f4f6;
+      font-weight: bold;
+      border-bottom: 2px solid #2563eb;
+    }
+
+    .progress-bg {
+      background: #e5e7eb;
+      height: 8px;
+      border-radius: 4px;
+      overflow: hidden;
+      width: 100%;
+    }
+
+    .progress-fill {
+      background: #2563eb;
+      height: 100%;
+      transition: width 0.3s;
+    }
+
+    .progress-fill.high {
+      background: #dc2626;
+    }
+
+    .progress-fill.med {
+      background: #eab308;
+    }
+
+    /* Automation Styles */
+    .script-card {
+      position: relative;
+      border-left: 4px solid transparent;
+    }
+
+    .script-card.blue {
+      border-left-color: #3b82f6;
+    }
+
+    .script-card.green {
+      border-left-color: #22c55e;
+    }
+
+    .script-card.red {
+      border-left-color: #ef4444;
+    }
+
+    .script-card .title {
+      font-weight: 600;
+      font-size: 16px;
+      margin-bottom: 4px;
+    }
+
+    .script-card .desc {
+      font-size: 13px;
+      color: #6b7280;
+      min-height: 40px;
+      margin-bottom: 8px;
+    }
+
+    /* Modal Styles */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+    }
+
+    .modal {
+      background: #fff;
+      width: 800px;
+      max-width: 90%;
+      max-height: 80vh;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+
+    .modal-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid #e5e7eb;
+      font-weight: bold;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .modal-body {
+      padding: 0;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      flex: 1;
+      overflow: auto;
+      font-family: monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+
+    .modal-body-content {
+      padding: 16px;
+    }
+
+    .modal-footer {
+      padding: 12px 16px;
+      border-top: 1px solid #e5e7eb;
+      text-align: right;
+    }
+
+    a {
+      color: #2563eb;
+      text-decoration: none;
+    }
+
+    /* Dark mode */
+    body.dark {
+      background: #0f172a;
+      color: #e5e7eb;
+    }
+
+    body.dark th,
+    body.dark td {
+      border-color: #1f2937
+    }
+
+    body.dark tbody tr:hover {
+      background: #0b1220
+    }
+
+    body.dark .card {
+      background: #0f172a;
+      border-color: #1f2937
+    }
+
+    body.dark button {
+      background: #0b1220;
+      color: #e5e7eb;
+      border: 1px solid #1f2937
+    }
+
+    body.dark button:hover {
+      background: #0e1526
+    }
+
+    body.dark button:active {
+      background: #0a1120
+    }
+
+    body.dark .tab.active {
+      background: #1e293b;
+      border-bottom-color: #3b82f6;
+    }
+
+    body.dark .progress-bg {
+      background: #374151;
+    }
+
+    body.dark .modal {
+      background: #1e293b;
+      border-color: #374151;
+    }
+
+    body.dark .modal-header,
+    body.dark .modal-footer {
+      border-color: #374151;
+    }
+  </style>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/axios@1.7.7/dist/axios.min.js"></script>
+</head>
+
+<body>
+  <div id="app" class="app">
+    <div class="toolbar">
+      <a href="/index.html">← Back to Explorer</a>
+      <span style="flex:1"></span>
+      <button @click="toggleTheme">{{ theme === 'dark' ? 'Light' : 'Dark' }}</button>
     </div>
-    <script>
-      const { createApp, ref, onMounted, computed } = Vue
-      createApp({
-        setup() {
-          const tab = ref('services')
-          const summary = ref({ shares: 0, pins: 0 })
-          const stats = ref({ cpu_percent: 0, memory_percent: 0, memory_used: 0, memory_total: 0, disk_percent: 0, disk_free: 0, disk_total: 0 })
-          
-          const shares = ref([])
-          const pins = ref([])
-          
-          const services = ref([])
-          const serviceFilter = ref('')
-          
-          const processes = ref([])
 
-          const theme = ref('light')
+    <!-- Dashboard Cards -->
+    <h2>System Dashboard</h2>
+    <div class="cards">
+      <div class="card">
+        <div class="muted">CPU Usage</div>
+        <div style="font-size:24px; font-weight:700">{{ stats.cpu_percent }}%</div>
+        <div class="progress-bg">
+          <div class="progress-fill" :class="getUsageClass(stats.cpu_percent)"
+            :style="{width: stats.cpu_percent + '%'}"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="muted">RAM Usage</div>
+        <div style="font-size:24px; font-weight:700">{{ stats.memory_percent }}%</div>
+        <div class="muted">{{ formatBytes(stats.memory_used) }} / {{ formatBytes(stats.memory_total) }}</div>
+        <div class="progress-bg">
+          <div class="progress-fill" :class="getUsageClass(stats.memory_percent)"
+            :style="{width: stats.memory_percent + '%'}"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="muted">Disk ({{ stats.disk_percent }}%)</div>
+        <div style="font-size:24px; font-weight:700">{{ formatBytes(stats.disk_free) }} Free</div>
+        <div class="muted">Total: {{ formatBytes(stats.disk_total) }}</div>
+      </div>
+      <div class="card">
+        <div class="muted">Shares / Pins</div>
+        <div style="font-size:24px; font-weight:700">{{ summary.shares }} / {{ summary.pins }}</div>
+      </div>
+    </div>
 
-          // --- Loaders ---
-          async function loadStats() {
-             try {
-                const res = await axios.get('/api/monitor/stats')
-                stats.value = res.data
-             } catch {}
-          }
+    <div class="tabs">
+      <div class="tab" :class="{active: tab === 'services'}" @click="tab = 'services'">Services</div>
+      <div class="tab" :class="{active: tab === 'processes'}" @click="tab = 'processes'">Processes</div>
+      <div class="tab" :class="{active: tab === 'automation'}" @click="tab = 'automation'">Automation Hub</div>
+      <div class="tab" :class="{active: tab === 'database'}" @click="tab = 'database'">Database</div>
+    </div>
 
-          async function loadDB() {
-            const [sum, sh, ps] = await Promise.all([
-              axios.get('/api/admin/summary'),
-              axios.get('/api/admin/shares'),
-              axios.get('/api/admin/pins')
-            ])
-            summary.value = sum.data
-            shares.value = Array.isArray(sh.data) ? sh.data : []
-            pins.value = Array.isArray(ps.data) ? ps.data : []
-          }
+    <!-- Services Tab -->
+    <div v-if="tab === 'services'">
+      <div class="toolbar">
+        <h3>Windows Services</h3>
+        <button class="btn-sm" @click="loadServices">Refresh</button>
+      </div>
+      <input type="text" v-model="serviceFilter" placeholder="Filter services..."
+        style="padding:6px; margin-bottom:12px; width:200px; border:1px solid #ccc; border-radius:4px;">
+      <div style="max-height: 500px; overflow-y: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Display Name</th>
+              <th>Name</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="svc in filteredServices" :key="svc.name">
+              <td>{{ svc.display_name }}</td>
+              <td style="font-family: monospace; font-size: 0.9em;">{{ svc.name }}</td>
+              <td>
+                <span :class="{'status-running': svc.status === 'running', 'status-stopped': svc.status === 'stopped'}">
+                  {{ svc.status }}
+                </span>
+              </td>
+              <td>
+                <button v-if="svc.status === 'running'" class="btn-sm btn-danger"
+                  @click="svcAction(svc.name, 'stop')">Stop</button>
+                <button v-if="svc.status === 'stopped'" class="btn-sm btn-success"
+                  @click="svcAction(svc.name, 'start')">Start</button>
+                <button v-if="svc.status === 'running'" class="btn-sm"
+                  @click="svcAction(svc.name, 'restart')">Restart</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
-          async function loadServices() {
-             try {
-                const res = await axios.get('/api/services')
-                services.value = res.data
-             } catch (e) { console.error(e) }
-          }
-          
-          async function loadProcesses() {
-             try {
-                const res = await axios.get('/api/processes')
-                processes.value = res.data
-             } catch (e) { console.error(e) }
-          }
+    <!-- Processes Tab -->
+    <div v-if="tab === 'processes'">
+      <div class="toolbar">
+        <h3>Top Processes (by RAM)</h3>
+        <button class="btn-sm" @click="loadProcesses">Refresh</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>PID</th>
+            <th>Name</th>
+            <th>User</th>
+            <th>Memory</th>
+            <th>CPU</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="p in processes" :key="p.pid">
+            <td style="font-family:monospace">{{ p.pid }}</td>
+            <td>{{ p.name }}</td>
+            <td>{{ p.username }}</td>
+            <td>{{ p.memory_mb }} MB</td>
+            <td>{{ p.cpu_percent }}%</td>
+            <td>
+              <button class="btn-sm btn-danger" @click="killProcess(p.pid)">Kill</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
-          // --- Actions ---
-          async function svcAction(name, action) {
-             if (!confirm(`Are you sure you want to ${action} service '${name}'?`)) return
-             try {
-                await axios.post(`/api/services/${name}`, { action })
-                // wait a bit then reload
-                setTimeout(loadServices, 2000)
-             } catch (e) {
-                alert('Action failed: ' + (e.response?.data?.detail || e.message))
-             }
-          }
+    <!-- Automation Tab -->
+    <div v-if="tab === 'automation'">
+      <div class="toolbar">
+        <h3>Available Scripts</h3>
+        <button class="btn-sm" @click="loadScripts">Refresh</button>
+      </div>
+      <div class="cards">
+        <div v-for="s in scripts" :key="s.filename" class="card script-card" :class="s.color">
+          <div class="title">{{ s.name }}</div>
+          <div class="desc">{{ s.description || s.filename }}</div>
+          <div class="toolbar">
+            <span class="muted" style="flex:1">{{ s.type.toUpperCase() }}</span>
+            <button class="btn-sm btn-primary" @click="runScript(s.filename)">Run Now</button>
+          </div>
+        </div>
+        <div v-if="scripts.length === 0" class="muted" style="grid-column: 1/-1;">No scripts found in server_scripts/
+        </div>
+      </div>
 
-          async function killProcess(pid) {
-             if (!confirm(`Are you sure you want to KILL process ${pid}? Data may be lost.`)) return
-             try {
-                await axios.post('/api/processes/kill', { pid })
-                setTimeout(loadProcesses, 1000)
-             } catch (e) {
-                alert('Kill failed: ' + (e.response?.data?.detail || e.message))
-             }
-          }
+      <h3 style="margin-top:24px">Recent Job History</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Script</th>
+            <th>Status</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="job in jobHistory" :key="job.id">
+            <td>{{ formatTime(new Date(job.start_time).getTime()/1000) }}</td>
+            <td>{{ job.script }}</td>
+            <td>
+              <span :style="{color: job.status=='success'?'green':(job.status=='failed'?'red':'orange')}">
+                {{ job.status.toUpperCase() }}
+              </span>
+            </td>
+            <td>
+              <button class="btn-sm" @click="openJob(job.id)">View Log</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
-          async function delShare(token) {
-            if (!confirm('Delete this share?')) return
-            await axios.delete('/api/admin/shares', { params: { token } })
-            await loadDB()
-          }
+    <!-- Database Tab -->
+    <div v-if="tab === 'database'">
+      <h3>Shares</h3>
+      <div class="muted">Manage existing share links.</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Token</th>
+            <th>Root</th>
+            <th>Readonly</th>
+            <th>Allow Download</th>
+            <th>Allow Edit</th>
+            <th>Expires</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="s in shares" :key="s.token">
+            <td style="font-family:ui-monospace">{{ s.token }}</td>
+            <td>{{ s.root }}</td>
+            <td>{{ s.readonly ? 'Yes' : 'No' }}</td>
+            <td>{{ s.allow_download ? 'Yes' : 'No' }}</td>
+            <td>{{ s.allow_edit ? 'Yes' : 'No' }}</td>
+            <td>{{ formatTime(s.expires_at) }}</td>
+            <td>
+              <button @click="delShare(s.token)">Delete</button>
+            </td>
+          </tr>
+          <tr v-if="shares.length === 0">
+            <td colspan="7" class="muted">No data</td>
+          </tr>
+        </tbody>
+      </table>
 
-          async function delPin(id) {
-            if (!confirm('Delete this pin?')) return
-            await axios.delete('/api/admin/pins', { params: { id } })
-            await loadDB()
-          }
+      <h3 style="margin-top:20px">Pins</h3>
+      <div class="muted">Pinned folders persisted in DB.</div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Path</th>
+            <th>Created</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="p in pins" :key="p.id">
+            <td>{{ p.id }}</td>
+            <td>{{ p.path }}</td>
+            <td>{{ formatTime(p.created_at) }}</td>
+            <td>
+              <button @click="delPin(p.id)">Delete</button>
+            </td>
+          </tr>
+          <tr v-if="pins.length === 0">
+            <td colspan="4" class="muted">No data</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
-          // --- Computed / Helpers ---
-          const filteredServices = computed(() => {
-             if (!serviceFilter.value) return services.value
-             const q = serviceFilter.value.toLowerCase()
-             return services.value.filter(s => 
-                s.name.toLowerCase().includes(q) || 
-                s.display_name.toLowerCase().includes(q)
-             )
-          })
+    <!-- Console/Log Modal -->
+    <div v-if="showModal" class="modal-overlay" @click.self="closeModal">
+      <div class="modal">
+        <div class="modal-header">
+          <span>Job: {{ currentJob?.script }}</span>
+          <span>Status: {{ currentJob?.status }}</span>
+        </div>
+        <div class="modal-body" ref="logBody">
+          <div class="modal-body-content">{{ currentJob?.log }}</div>
+        </div>
+        <div class="modal-footer">
+          <button @click="closeModal">Close</button>
+        </div>
+      </div>
+    </div>
 
-          function formatBytes(bytes) {
-              if (bytes === 0) return '0 B';
-              const k = 1024;
-              const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-              const i = Math.floor(Math.log(bytes) / Math.log(k));
-              return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-          }
-          
-          function formatTime(ts) {
-            if (!ts) return '-'
-            try { return new Date(Number(ts) * 1000).toLocaleString() } catch { return String(ts) }
-          }
-          
-          function getUsageClass(pct) {
-             if (pct > 90) return 'high'
-             if (pct > 70) return 'med'
-             return ''
-          }
+  </div>
+  <script>
+    const { createApp, ref, onMounted, computed, watch, nextTick } = Vue
+    createApp({
+      setup() {
+        const tab = ref('automation')
+        const summary = ref({ shares: 0, pins: 0 })
+        const stats = ref({ cpu_percent: 0, memory_percent: 0, memory_used: 0, memory_total: 0, disk_percent: 0, disk_free: 0, disk_total: 0 })
 
-          function toggleTheme() {
-            theme.value = theme.value === 'dark' ? 'light' : 'dark'
-            try { localStorage.setItem('rfe:theme', theme.value) } catch {}
-            document.body.classList.toggle('dark', theme.value === 'dark')
-          }
+        const shares = ref([])
+        const pins = ref([])
 
-          onMounted(() => {
-            // Theme init
-            try {
-              const t = localStorage.getItem('rfe:theme')
-              if (t === 'dark') { theme.value = 'dark'; document.body.classList.add('dark') }
-            } catch {}
-            
-            // Initial loads
-            loadStats()
-            loadDB()
-            loadServices()
-            loadProcesses()
-            
-            // Auto refresh stats every 5s
-            setInterval(loadStats, 5000)
-          })
-          
-          return { 
-             tab, summary, stats, shares, pins, services, serviceFilter, processes, 
-             filteredServices, theme,
-             loadServices, loadProcesses, svcAction, killProcess, delShare, delPin,
-             formatBytes, formatTime, getUsageClass, toggleTheme 
+        const services = ref([])
+        const serviceFilter = ref('')
+
+        const processes = ref([])
+
+        const scripts = ref([])
+        const jobHistory = ref([])
+        const showModal = ref(false)
+        const currentJob = ref(null)
+        let pollInterval = null
+        const logBody = ref(null)
+
+        const theme = ref('light')
+
+        // --- Loaders ---
+        async function loadStats() {
+          try {
+            const res = await axios.get('/api/monitor/stats')
+            stats.value = res.data
+          } catch { }
+        }
+
+        async function loadDB() {
+          const [sum, sh, ps] = await Promise.all([
+            axios.get('/api/admin/summary'),
+            axios.get('/api/admin/shares'),
+            axios.get('/api/admin/pins')
+          ])
+          summary.value = sum.data
+          shares.value = Array.isArray(sh.data) ? sh.data : []
+          pins.value = Array.isArray(ps.data) ? ps.data : []
+        }
+
+        async function loadServices() {
+          try {
+            const res = await axios.get('/api/services')
+            services.value = res.data
+          } catch (e) { console.error(e) }
+        }
+
+        async function loadProcesses() {
+          try {
+            const res = await axios.get('/api/processes')
+            processes.value = res.data
+          } catch (e) { console.error(e) }
+        }
+
+        async function loadScripts() {
+          try {
+            const res = await axios.get('/api/automation/scripts')
+            scripts.value = res.data
+            loadHistory()
+          } catch (e) { console.error(e) }
+        }
+
+        async function loadHistory() {
+          try {
+            const res = await axios.get('/api/automation/history')
+            jobHistory.value = res.data
+          } catch (e) { console.error(e) }
+        }
+
+        // --- Actions ---
+        async function svcAction(name, action) {
+          if (!confirm(`Are you sure you want to ${action} service '${name}'?`)) return
+          try {
+            await axios.post(`/api/services/${name}`, { action })
+            setTimeout(loadServices, 2000)
+          } catch (e) {
+            alert('Action failed: ' + (e.response?.data?.detail || e.message))
           }
         }
-      }).mount('#app')
-    </script>
-  </body>
+
+        async function killProcess(pid) {
+          if (!confirm(`Are you sure you want to KILL process ${pid}? Data may be lost.`)) return
+          try {
+            await axios.post('/api/processes/kill', { pid })
+            setTimeout(loadProcesses, 1000)
+          } catch (e) {
+            alert('Kill failed: ' + (e.response?.data?.detail || e.message))
+          }
+        }
+
+        async function delShare(token) {
+          if (!confirm('Delete this share?')) return
+          await axios.delete('/api/admin/shares', { params: { token } })
+          await loadDB()
+        }
+
+        async function delPin(id) {
+          if (!confirm('Delete this pin?')) return
+          await axios.delete('/api/admin/pins', { params: { id } })
+          await loadDB()
+        }
+
+        // --- Automation ---
+        async function runScript(filename) {
+          try {
+            const res = await axios.post(`/api/automation/run/${filename}`)
+            const jobId = res.data.job_id
+            openJob(jobId)
+          } catch (e) {
+            alert('Failed to run script: ' + (e.response?.data?.detail || e.message))
+          }
+        }
+
+        async function openJob(jobId) {
+          showModal.value = true
+          if (pollInterval) clearInterval(pollInterval)
+
+          await fetchJob(jobId)
+          pollInterval = setInterval(() => fetchJob(jobId), 1000)
+        }
+
+        async function fetchJob(jobId) {
+          try {
+            const res = await axios.get(`/api/automation/jobs/${jobId}`)
+            currentJob.value = res.data
+
+            // Auto scroll
+            nextTick(() => {
+              if (logBody.value) logBody.value.scrollTop = logBody.value.scrollHeight;
+            })
+
+            if (res.data.status !== 'running') {
+              clearInterval(pollInterval)
+              loadHistory() // refresh list
+            }
+          } catch {
+            clearInterval(pollInterval)
+          }
+        }
+
+        function closeModal() {
+          showModal.value = false
+          if (pollInterval) clearInterval(pollInterval)
+          currentJob.value = null
+        }
+
+        // --- Computed / Helpers ---
+        const filteredServices = computed(() => {
+          if (!serviceFilter.value) return services.value
+          const q = serviceFilter.value.toLowerCase()
+          return services.value.filter(s =>
+            s.name.toLowerCase().includes(q) ||
+            s.display_name.toLowerCase().includes(q)
+          )
+        })
+
+        function formatBytes(bytes) {
+          if (bytes === 0) return '0 B';
+          const k = 1024;
+          const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+          const i = Math.floor(Math.log(bytes) / Math.log(k));
+          return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function formatTime(ts) {
+          if (!ts) return '-'
+          try { return new Date(Number(ts) * 1000).toLocaleString() } catch { return String(ts) }
+        }
+
+        function getUsageClass(pct) {
+          if (pct > 90) return 'high'
+          if (pct > 70) return 'med'
+          return ''
+        }
+
+        function toggleTheme() {
+          theme.value = theme.value === 'dark' ? 'light' : 'dark'
+          try { localStorage.setItem('rfe:theme', theme.value) } catch { }
+          document.body.classList.toggle('dark', theme.value === 'dark')
+        }
+
+        onMounted(() => {
+          // Theme init
+          try {
+            const t = localStorage.getItem('rfe:theme')
+            if (t === 'dark') { theme.value = 'dark'; document.body.classList.add('dark') }
+          } catch { }
+
+          loadStats()
+          loadDB()
+          loadServices()
+          loadProcesses()
+          loadScripts()
+
+          setInterval(loadStats, 5000)
+        })
+
+        return {
+          tab, summary, stats, shares, pins, services, serviceFilter, processes,
+          filteredServices, theme, scripts, jobHistory, showModal, currentJob, logBody,
+          loadServices, loadProcesses, loadScripts, svcAction, killProcess, delShare, delPin,
+          runScript, openJob, closeModal,
+          formatBytes, formatTime, getUsageClass, toggleTheme
+        }
+      }
+    }).mount('#app')
+  </script>
+</body>
+
 </html>

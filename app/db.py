@@ -39,6 +39,19 @@ def init_db() -> None:
 			);
 			"""
 		)
+		cur.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS jobs (
+				id TEXT PRIMARY KEY,
+				script TEXT NOT NULL,
+				status TEXT NOT NULL,
+				start_time TEXT NOT NULL,
+				end_time TEXT,
+				exit_code INTEGER,
+				log TEXT
+			);
+			"""
+		)
 		conn.commit()
 	finally:
 		conn.close()
