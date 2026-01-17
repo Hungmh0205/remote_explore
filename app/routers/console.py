@@ -33,10 +33,39 @@ async def websocket_console(websocket: WebSocket):
         await websocket.close()
         return
 
-    # 2. Spawn the process (cmd.exe)
     # dimensions=(rows, cols)
+    cwd = os.getcwd()
     try:
-        proc = PtyProcess.spawn("cmd.exe", dimensions=(24, 80))
+        # "Lối đi mới 2.0": PowerShell + Clean Registry Environment
+        # We reconstruct the environment from Windows Registry to ensure it's identical
+        # to a fresh local session, removing any Server Venv pollution.
+        env = os.environ.copy()
+        
+        # 1. Cleanup vars
+        if "VIRTUAL_ENV" in env:
+            del env["VIRTUAL_ENV"]
+        
+        # 2. Reconstruct PATH from Registry (True Cleanliness)
+        try:
+            import winreg
+            # Load System PATH
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment') as key:
+                sys_path, _ = winreg.QueryValueEx(key, 'Path')
+            
+            # Load User PATH
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Environment') as key:
+                user_path, _ = winreg.QueryValueEx(key, 'Path')
+            
+            # Combine
+            full_path = f"{sys_path};{user_path}"
+            # Expand variables (like %SystemRoot%)
+            env["PATH"] = os.path.expandvars(full_path)
+        except Exception:
+            # Fallback: Just keep existing PATH if registry fails
+            pass
+
+        # 3. Spawn PowerShell (Clean ENV + CWD)
+        proc = PtyProcess.spawn("powershell.exe -NoLogo", cwd=cwd, env=env, dimensions=(24, 80))
     except Exception as e:
         await websocket.send_text(f"Error spawning process: {str(e)}")
         await websocket.close()

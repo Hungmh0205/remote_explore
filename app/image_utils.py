@@ -7,11 +7,8 @@ process_pool: ProcessPoolExecutor = None
 
 def init_pool():
     global process_pool
-    # Use max_workers based on CPU cores, leave one for main server/OS
-    # Clamp between 2 and 8
-    cores = multiprocessing.cpu_count()
-    workers = max(2, min(cores - 1, 8))
-    process_pool = ProcessPoolExecutor(max_workers=workers)
+    # Limit to exactly 2 workers to save RAM as requested
+    process_pool = ProcessPoolExecutor(max_workers=2)
 
 def shutdown_pool():
     global process_pool

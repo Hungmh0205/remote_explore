@@ -22,6 +22,7 @@ import asyncio
 from ..config import settings
 import stat as _stat
 from .. import image_utils
+import aiofiles
 
 # --- Constants & Config ---
 SEARCH_BLACKLIST = {
@@ -90,14 +91,15 @@ def _detect_windows_drives() -> List[str]:
 
 
 # --- Zip Streaming Helper ---
-def generate_zip_stream(files_to_zip: List[Tuple[str, str]]) -> Generator[bytes, None, None]:
+def generate_zip_stream(files_to_zip: List[Tuple[str, str]], compression=zipfile.ZIP_DEFLATED) -> Generator[bytes, None, None]:
 	"""
 	Generates a zip stream byte by byte.
 	files_to_zip: List of (absolute_system_path, internal_zip_path)
 	"""
 	mem_file = io.BytesIO()
 	# Create a ZipFile object that writes to the in-memory byte buffer
-	with zipfile.ZipFile(mem_file, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+	# Enable ZIP64 for large files
+	with zipfile.ZipFile(mem_file, mode="w", compression=compression, allowZip64=True) as zf:
 		for abs_path, arc_name in files_to_zip:
 			# Ensure we are reading a file
 			if not os.path.isfile(abs_path):
@@ -106,7 +108,7 @@ def generate_zip_stream(files_to_zip: List[Tuple[str, str]]) -> Generator[bytes,
 			# Create a ZipInfo object to handle attributes properly
 			try:
 				z_info = zipfile.ZipInfo.from_file(abs_path, arc_name)
-				z_info.compress_type = zipfile.ZIP_DEFLATED
+				z_info.compress_type = compression
 			except OSError:
 				# Skip files that might have permission issues or vanished
 				continue
@@ -115,7 +117,8 @@ def generate_zip_stream(files_to_zip: List[Tuple[str, str]]) -> Generator[bytes,
 			try:
 				with open(abs_path, "rb") as src, zf.open(z_info, "w") as dest:
 					while True:
-						chunk = src.read(64 * 1024)  # Read in 64KB chunks
+						# Increase chunk size to 1MB for better performance with large files
+						chunk = src.read(1024 * 1024)
 						if not chunk:
 							break
 						dest.write(chunk)
@@ -340,7 +343,7 @@ def search_files(body: SearchBody):
 
 
 @router.get("/zip")
-def download_zip(path: str):
+def download_zip(path: str, fast: bool = False):
 	"""Zip a folder (or single file) and stream as ZIP download."""
 	allowed, abs_path = resolve_path(path)
 	if not allowed:
@@ -351,8 +354,10 @@ def download_zip(path: str):
 	basename = os.path.basename(abs_path.rstrip("/\\")) or "archive"
 	files_to_zip = _collect_files_recursive(abs_path)
 	
+	compression = zipfile.ZIP_STORED if fast else zipfile.ZIP_DEFLATED
+	
 	response = StreamingResponse(
-		generate_zip_stream(files_to_zip),
+		generate_zip_stream(files_to_zip, compression=compression),
 		media_type="application/zip"
 	)
 	response.headers["Content-Disposition"] = f'attachment; filename="{basename}.zip"'
@@ -361,6 +366,7 @@ def download_zip(path: str):
 
 class MultipleZipBody(BaseModel):
 	paths: List[str]
+	fast: bool = False
 
 
 @router.post("/zip/multiple")
@@ -383,29 +389,68 @@ def download_multiple_zip(body: MultipleZipBody):
 		# Archive: /Folder1/... and /File.txt
 		files_to_zip.extend(_collect_files_recursive(abs_path, root_arcname=os.path.basename(abs_path)))
 	
+	compression = zipfile.ZIP_STORED if body.fast else zipfile.ZIP_DEFLATED
+
 	response = StreamingResponse(
-		generate_zip_stream(files_to_zip),
+		generate_zip_stream(files_to_zip, compression=compression),
 		media_type="application/zip"
 	)
 	response.headers["Content-Disposition"] = 'attachment; filename="selected_files.zip"'
 	return response
 
 
+from fastapi import Form
 @router.post("/upload")
-async def upload_file(dest: str, file: UploadFile = File(...)):
+async def upload_file(dest: str, file: UploadFile = File(...), rel_path: Optional[str] = Form(None)):
 	allowed, abs_dest = resolve_path(dest)
 	if not allowed:
 		raise HTTPException(status_code=403, detail="Destination not allowed")
 	if not os.path.isdir(abs_dest):
 		raise HTTPException(status_code=404, detail="Destination directory not found")
-	target_path = os.path.join(abs_dest, file.filename)
+	
+	# If rel_path provided (e.g. "subfolder/image.png"), join it. 
+	# Otherwise use filename.
+	# Note: rel_path should come from webkitRelativePath in frontend.
+	
+	final_filename = file.filename
+	if rel_path and rel_path.strip():
+		# Security check: rel_path shouldn't break out
+		# We use os.path.join(dest, rel_path) then resolve
+		import pathlib
+		try:
+			# Validate relative path is truly relative and safe
+			# We can just join and check limits
+			# Normalize separators to match OS
+			rel_path = rel_path.replace("/", os.sep).replace("\\", os.sep)
+			# Prevent leading slashes or drive letters in rel_path
+			if os.path.isabs(rel_path):
+				# fallback to simple filename
+				pass
+			else:
+				final_filename = rel_path
+		except Exception:
+			pass
+
+	target_path = os.path.join(abs_dest, final_filename)
+	
+	# Resolve again to ensure it's still within allowed bounds (though dest was allowed, rel_path might try ..)
+	# But since we established abs_dest is allowed, we just need to make sure target_path doesn't escape.
+	# Simple check:
+	if not os.path.abspath(target_path).startswith(os.path.abspath(abs_dest)):
+		raise HTTPException(status_code=403, detail="Invalid relative path")
+
+	# Create parent directories if they don't exist
+	os.makedirs(os.path.dirname(target_path), exist_ok=True)
+
 	try:
-		with open(target_path, "wb") as f:
+		# Write in larger chunks (e.g. 5MB) to improve I/O performance
+		# Use aiofiles to prevent blocking the event loop
+		async with aiofiles.open(target_path, "wb") as f:
 			while True:
-				chunk = await file.read(1024 * 1024)
+				chunk = await file.read(5 * 1024 * 1024)
 				if not chunk:
 					break
-				f.write(chunk)
+				await f.write(chunk)
 	finally:
 		await file.close()
 	return {"ok": True, "path": target_path}

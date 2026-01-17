@@ -15,6 +15,8 @@ def get_conn() -> sqlite3.Connection:
 def init_db() -> None:
 	conn = get_conn()
 	try:
+		# Enable WAL mode for better concurrency
+		conn.execute("PRAGMA journal_mode=WAL;")
 		cur = conn.cursor()
 		cur.execute(
 			"""
