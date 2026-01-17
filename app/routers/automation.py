@@ -147,3 +147,8 @@ def get_history():
     # Return last 20 jobs, sorted new to old
     rows = query_all("SELECT * FROM jobs ORDER BY start_time DESC LIMIT 20")
     return [JobInfo(**r) for r in rows]
+
+@router.delete("/automation/jobs/{job_id}")
+def delete_job(job_id: str):
+    execute("DELETE FROM jobs WHERE id=?", (job_id,))
+    return {"ok": True}

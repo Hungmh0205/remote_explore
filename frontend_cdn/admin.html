@@ -320,6 +320,7 @@
   </style>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <script src="https://unpkg.com/axios@1.7.7/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
@@ -334,7 +335,13 @@
     <h2>System Dashboard</h2>
     <div class="cards">
       <div class="card">
-        <div class="muted">CPU Usage</div>
+        <div class="muted" style="display:flex; justify-content:space-between; align-items:center;">
+          <span>CPU Usage</span>
+          <span v-if="stats.is_admin"
+            style="background:#dcfce7; color:#166534; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold;">ADMIN</span>
+          <span v-else
+            style="background:#fee2e2; color:#991b1b; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold;">USER</span>
+        </div>
         <div style="font-size:24px; font-weight:700">{{ stats.cpu_percent }}%</div>
         <div class="progress-bg">
           <div class="progress-fill" :class="getUsageClass(stats.cpu_percent)"
@@ -356,6 +363,12 @@
         <div class="muted">Total: {{ formatBytes(stats.disk_total) }}</div>
       </div>
       <div class="card">
+        <div class="muted">Network Speed (KB/s)</div>
+        <div style="font-size:18px; font-weight:700" title="Download / Upload">
+          ↓{{ netSpeed?.recv || 0 }} / ↑{{ netSpeed?.sent || 0 }}
+        </div>
+      </div>
+      <div class="card">
         <div class="muted">Shares / Pins</div>
         <div style="font-size:24px; font-weight:700">{{ summary.shares }} / {{ summary.pins }}</div>
       </div>
@@ -364,6 +377,7 @@
     <div class="tabs">
       <div class="tab" :class="{active: tab === 'services'}" @click="tab = 'services'">Services</div>
       <div class="tab" :class="{active: tab === 'processes'}" @click="tab = 'processes'">Processes</div>
+      <div class="tab" :class="{active: tab === 'performance'}" @click="tab = 'performance'">Performance</div>
       <div class="tab" :class="{active: tab === 'automation'}" @click="tab = 'automation'">Automation Hub</div>
       <div class="tab" :class="{active: tab === 'database'}" @click="tab = 'database'">Database</div>
     </div>
@@ -415,6 +429,11 @@
         <h3>Top Processes (by RAM)</h3>
         <button class="btn-sm" @click="loadProcesses">Refresh</button>
       </div>
+      <input type="text" v-model="processFilter" placeholder="Filter processes (Name or PID)..."
+        style="padding:6px; margin-bottom:12px; width:220px; border:1px solid #ccc; border-radius:4px;">
+      <!-- Apps Section -->
+      <h4 style="margin: 16px 0 8px 0; border-bottom: 2px solid #2563eb; display:inline-block; padding-bottom:4px;">Apps
+        ({{ apps.length }})</h4>
       <table>
         <thead>
           <tr>
@@ -427,7 +446,38 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="p in processes" :key="p.pid">
+          <tr v-for="p in apps" :key="p.pid">
+            <td style="font-family:monospace">{{ p.pid }}</td>
+            <td style="font-weight:bold">{{ p.name }}</td>
+            <td>{{ p.username }}</td>
+            <td>{{ p.memory_mb }} MB</td>
+            <td>{{ p.cpu_percent }}%</td>
+            <td>
+              <button class="btn-sm btn-danger" @click="killProcess(p.pid)">Kill</button>
+            </td>
+          </tr>
+          <tr v-if="apps.length === 0">
+            <td colspan="6" class="muted">No active apps found.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Background Processes Section -->
+      <h4 style="margin: 24px 0 8px 0; border-bottom: 2px solid #6b7280; display:inline-block; padding-bottom:4px;">
+        Background Processes ({{ backgroundProcesses.length }})</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>PID</th>
+            <th>Name</th>
+            <th>User</th>
+            <th>Memory</th>
+            <th>CPU</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="p in backgroundProcesses" :key="p.pid">
             <td style="font-family:monospace">{{ p.pid }}</td>
             <td>{{ p.name }}</td>
             <td>{{ p.username }}</td>
@@ -439,6 +489,32 @@
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- Performance Tab -->
+    <div v-if="tab === 'performance'">
+      <div class="toolbar">
+        <h3>Realtime Performance</h3>
+        <div class="muted">Update Interval: 0.5s</div>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
+        <div class="card">
+          <div class="muted">CPU Usage (%)</div>
+          <canvas id="chartCpu"></canvas>
+        </div>
+        <div class="card">
+          <div class="muted">Memory Usage (%)</div>
+          <canvas id="chartMem"></canvas>
+        </div>
+        <div class="card">
+          <div class="muted">Disk Usage (%)</div>
+          <canvas id="chartDisk"></canvas>
+        </div>
+        <div class="card">
+          <div class="muted">Network (KB/s)</div>
+          <canvas id="chartNet"></canvas>
+        </div>
+      </div>
     </div>
 
     <!-- Automation Tab -->
@@ -481,6 +557,7 @@
             </td>
             <td>
               <button class="btn-sm" @click="openJob(job.id)">View Log</button>
+              <button class="btn-sm btn-danger" @click="delJob(job.id)">✕</button>
             </td>
           </tr>
         </tbody>
@@ -571,7 +648,8 @@
       setup() {
         const tab = ref('automation')
         const summary = ref({ shares: 0, pins: 0 })
-        const stats = ref({ cpu_percent: 0, memory_percent: 0, memory_used: 0, memory_total: 0, disk_percent: 0, disk_free: 0, disk_total: 0 })
+        const stats = ref({ cpu_percent: 0, memory_percent: 0, memory_used: 0, memory_total: 0, disk_percent: 0, disk_free: 0, disk_total: 0, net_sent: 0, net_recv: 0, is_admin: false })
+        const netSpeed = ref({ sent: 0, recv: 0 })
 
         const shares = ref([])
         const pins = ref([])
@@ -580,6 +658,7 @@
         const serviceFilter = ref('')
 
         const processes = ref([])
+        const processFilter = ref('')
 
         const scripts = ref([])
         const jobHistory = ref([])
@@ -588,13 +667,103 @@
         let pollInterval = null
         const logBody = ref(null)
 
+        const apps = computed(() => processes.value.filter(p => p.is_app && (
+          p.name.toLowerCase().includes(processFilter.value.toLowerCase()) ||
+          String(p.pid).includes(processFilter.value)
+        )))
+
+        const backgroundProcesses = computed(() => processes.value.filter(p => !p.is_app && (
+          p.name.toLowerCase().includes(processFilter.value.toLowerCase()) ||
+          String(p.pid).includes(processFilter.value)
+        )))
+
         const theme = ref('light')
 
         // --- Loaders ---
+        // --- Charts ---
+        let charts = {}
+        const MAX_POINTS = 30
+        let lastNet = { sent: 0, recv: 0, time: Date.now() }
+
+        function initCharts() {
+          if (tab.value !== 'performance') return
+          nextTick(() => {
+            if (charts.cpu) return // already init
+
+            const commonOptions = {
+              responsive: true,
+              animation: false, // Instant update for reliable "scroll" without morphing
+              scales: { x: { display: false }, y: { beginAtZero: true, max: 100 } },
+              elements: { point: { radius: 0 }, line: { tension: 0.1 } }, // Low tension for technical feel
+              plugins: { legend: { display: false } }
+            }
+
+            const createChart = (id, color, label, max = 100) => {
+              const ctx = document.getElementById(id)
+              if (!ctx) return null
+              return new Chart(ctx, {
+                type: 'line',
+                data: { labels: Array(MAX_POINTS).fill(''), datasets: [{ label, data: Array(MAX_POINTS).fill(0), borderColor: color, tension: 0.3, borderWidth: 2, fill: true, backgroundColor: color + '20' }] },
+                options: { ...commonOptions, scales: { ...commonOptions.scales, y: { ...commonOptions.scales.y, max: max || undefined } } }
+              })
+            }
+
+            charts.cpu = createChart('chartCpu', '#3b82f6', 'CPU')
+            charts.mem = createChart('chartMem', '#a855f7', 'Memory')
+            charts.disk = createChart('chartDisk', '#22c55e', 'Disk')
+            charts.net = createChart('chartNet', '#f97316', 'Network', null)
+          })
+        }
+
+        watch(tab, (newTab) => {
+          if (newTab === 'performance') initCharts()
+          else {
+            // Destroy charts to free memory if needed, or keep them
+            if (charts.cpu) {
+              Object.values(charts).forEach(c => c?.destroy())
+              charts = {}
+            }
+          }
+        })
+
         async function loadStats() {
           try {
             const res = await axios.get('/api/monitor/stats')
             stats.value = res.data
+
+            // Calculate Net Speed Global
+            const now = Date.now()
+            const dt = (now - lastNet.time) / 1000
+
+            let sentKbs = 0, recvKbs = 0
+            if (dt > 0 && lastNet.sent > 0) {
+              sentKbs = (stats.value.net_sent - lastNet.sent) / 1024 / dt
+              recvKbs = (stats.value.net_recv - lastNet.recv) / 1024 / dt
+              netSpeed.value = {
+                sent: sentKbs.toFixed(1),
+                recv: recvKbs.toFixed(1)
+              }
+            }
+
+            // Update Charts if active
+            if (tab.value === 'performance' && charts.cpu) {
+              const updateChart = (chart, val) => {
+                if (!chart) return
+                chart.data.datasets[0].data.push(val)
+                chart.data.datasets[0].data.shift()
+                chart.update()
+              }
+
+              updateChart(charts.cpu, stats.value.cpu_percent)
+              updateChart(charts.mem, stats.value.memory_percent)
+              updateChart(charts.disk, stats.value.disk_percent)
+
+              if (dt > 0 && lastNet.sent > 0) {
+                const totalKbs = sentKbs + recvKbs
+                updateChart(charts.net, totalKbs)
+              }
+            }
+            lastNet = { sent: stats.value.net_sent, recv: stats.value.net_recv, time: now }
           } catch { }
         }
 
@@ -669,6 +838,12 @@
           if (!confirm('Delete this pin?')) return
           await axios.delete('/api/admin/pins', { params: { id } })
           await loadDB()
+        }
+
+        async function delJob(id) {
+          if (!confirm('Delete this job record?')) return
+          await axios.delete(`/api/automation/jobs/${id}`)
+          await loadHistory()
         }
 
         // --- Automation ---
@@ -763,13 +938,15 @@
           loadProcesses()
           loadScripts()
 
-          setInterval(loadStats, 5000)
+          // Fast polling for realtime feel (500ms)
+          setInterval(loadStats, 500)
         })
 
         return {
-          tab, summary, stats, shares, pins, services, serviceFilter, processes,
+          tab, summary, stats, netSpeed, shares, pins, services, serviceFilter, processes, processFilter,
+          apps, backgroundProcesses,
           filteredServices, theme, scripts, jobHistory, showModal, currentJob, logBody,
-          loadServices, loadProcesses, loadScripts, svcAction, killProcess, delShare, delPin,
+          loadServices, loadProcesses, loadScripts, svcAction, killProcess, delShare, delPin, delJob,
           runScript, openJob, closeModal,
           formatBytes, formatTime, getUsageClass, toggleTheme
         }

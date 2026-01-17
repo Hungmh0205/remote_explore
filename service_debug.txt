@@ -1,0 +1,17 @@
+--- Starting Service Debug ---
+psutil version: 7.2.1
+Got iterator.
+#0 Name: ADPSvc, Display: Aggregated Data Platform Service, Status: stopped
+   as_dict failed for ADPSvc: WindowsService.as_dict() got an unexpected keyword argument 'attrs'
+#1 Name: ALG, Display: Application Layer Gateway Service, Status: stopped
+   as_dict failed for ALG: WindowsService.as_dict() got an unexpected keyword argument 'attrs'
+#2 Name: ApHidMonitorService, Display: Alps HID Monitor Service, Status: running
+   as_dict failed for ApHidMonitorService: WindowsService.as_dict() got an unexpected keyword argument 'attrs'
+#3 Name: AppIDSvc, Display: Application Identity, Status: stopped
+   as_dict failed for AppIDSvc: WindowsService.as_dict() got an unexpected keyword argument 'attrs'
+#4 Name: Appinfo, Display: Application Information, Status: running
+   as_dict failed for Appinfo: WindowsService.as_dict() got an unexpected keyword argument 'attrs'
+#5 Name: AppMgmt, Display: Application Management, Status: stopped
+   as_dict failed for AppMgmt: WindowsService.as_dict() got an unexpected keyword argument 'attrs'
+Limiting debug output to first 5 services.
+Total services iterated (partial): 6

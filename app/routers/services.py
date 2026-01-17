@@ -16,16 +16,20 @@ def list_services():
     """List all Windows services."""
     services = []
     # psutil.win_service_iter() returns a generator of WindowsService
+    services = []
     try:
         for svc in psutil.win_service_iter():
             try:
-                info = svc.as_dict(attrs=['name', 'display_name', 'status', 'start_type'])
-                services.append(ServiceInfo(**info))
-            except psutil.NoSuchProcess:
-                continue
-            except psutil.AccessDenied:
-                # Some system services might be denied, check if we can at least get name/status
+                # Manually accessing properties instead of using as_dict which is failing
+                services.append(ServiceInfo(
+                    name=svc.name(),
+                    display_name=svc.display_name(),
+                    status=svc.status(),
+                    start_type=svc.start_type() if hasattr(svc, 'start_type') else None
+                ))
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
                 try:
+                    # Fallback for restricted services
                     services.append(ServiceInfo(
                         name=svc.name(),
                         display_name=svc.display_name(),
@@ -33,13 +37,13 @@ def list_services():
                         start_type=None
                     ))
                 except:
-                    continue
+                    pass
+            except Exception:
+                pass
     except Exception as e:
-        # Not on Windows or permission error
-        print(f"Error listing services: {e}")
+        print(f"Error accessing Service Manager: {e}")
         return []
-    
-    # Sort by name
+
     return sorted(services, key=lambda s: s.name.lower())
 
 
