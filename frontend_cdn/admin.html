@@ -317,6 +317,29 @@
     body.dark .modal-footer {
       border-color: #374151;
     }
+
+    .table-container {
+      max-height: 400px;
+      overflow-y: auto;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+    }
+
+    body.dark .table-container {
+      border-color: #374151;
+    }
+
+    .sticky-th {
+      position: sticky;
+      top: 0;
+      background: #f9fafb;
+      z-index: 1;
+    }
+
+    body.dark .sticky-th {
+      background: #1e293b;
+      border-bottom-color: #374151;
+    }
   </style>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <script src="https://unpkg.com/axios@1.7.7/dist/axios.min.js"></script>
@@ -337,10 +360,15 @@
       <div class="card">
         <div class="muted" style="display:flex; justify-content:space-between; align-items:center;">
           <span>CPU Usage</span>
-          <span v-if="stats.is_admin"
-            style="background:#dcfce7; color:#166534; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold;">ADMIN</span>
-          <span v-else
-            style="background:#fee2e2; color:#991b1b; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold;">USER</span>
+          <div style="display:flex; gap:4px">
+            <span
+              style="background:#e5e7eb; color:#374151; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold;"
+              title="Server Process ID">PID {{ stats.server_pid }}</span>
+            <span v-if="stats.is_admin"
+              style="background:#dcfce7; color:#166534; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold;">ADMIN</span>
+            <span v-else
+              style="background:#fee2e2; color:#991b1b; font-size:10px; padding:2px 6px; border-radius:4px; font-weight:bold;">USER</span>
+          </div>
         </div>
         <div style="font-size:24px; font-weight:700">{{ stats.cpu_percent }}%</div>
         <div class="progress-bg">
@@ -429,66 +457,72 @@
         <h3>Top Processes (by RAM)</h3>
         <button class="btn-sm" @click="loadProcesses">Refresh</button>
       </div>
-      <input type="text" v-model="processFilter" placeholder="Filter processes (Name or PID)..."
-        style="padding:6px; margin-bottom:12px; width:220px; border:1px solid #ccc; border-radius:4px;">
+      <div style="margin-bottom:12px">
+        <input type="text" v-model="processFilter" placeholder="Filter processes (Name or PID)..."
+          style="padding:6px; width:220px; border:1px solid #ccc; border-radius:4px;">
+      </div>
       <!-- Apps Section -->
       <h4 style="margin: 16px 0 8px 0; border-bottom: 2px solid #2563eb; display:inline-block; padding-bottom:4px;">Apps
         ({{ apps.length }})</h4>
-      <table>
-        <thead>
-          <tr>
-            <th>PID</th>
-            <th>Name</th>
-            <th>User</th>
-            <th>Memory</th>
-            <th>CPU</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="p in apps" :key="p.pid">
-            <td style="font-family:monospace">{{ p.pid }}</td>
-            <td style="font-weight:bold">{{ p.name }}</td>
-            <td>{{ p.username }}</td>
-            <td>{{ p.memory_mb }} MB</td>
-            <td>{{ p.cpu_percent }}%</td>
-            <td>
-              <button class="btn-sm btn-danger" @click="killProcess(p.pid)">Kill</button>
-            </td>
-          </tr>
-          <tr v-if="apps.length === 0">
-            <td colspan="6" class="muted">No active apps found.</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="table-container">
+        <table style="margin-bottom: 0;">
+          <thead>
+            <tr>
+              <th class="sticky-th">PID</th>
+              <th class="sticky-th">Name</th>
+              <th class="sticky-th">User</th>
+              <th class="sticky-th">Memory</th>
+              <th class="sticky-th">CPU</th>
+              <th class="sticky-th">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="p in apps" :key="p.pid">
+              <td style="font-family:monospace">{{ p.pid }}</td>
+              <td style="font-weight:bold">{{ p.name }}</td>
+              <td>{{ p.username }}</td>
+              <td>{{ p.memory_mb }} MB</td>
+              <td>{{ p.cpu_percent }}%</td>
+              <td>
+                <button class="btn-sm btn-danger" @click="killProcess(p.pid)">Kill</button>
+              </td>
+            </tr>
+            <tr v-if="apps.length === 0">
+              <td colspan="6" class="muted">No active apps found.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <!-- Background Processes Section -->
       <h4 style="margin: 24px 0 8px 0; border-bottom: 2px solid #6b7280; display:inline-block; padding-bottom:4px;">
         Background Processes ({{ backgroundProcesses.length }})</h4>
-      <table>
-        <thead>
-          <tr>
-            <th>PID</th>
-            <th>Name</th>
-            <th>User</th>
-            <th>Memory</th>
-            <th>CPU</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="p in backgroundProcesses" :key="p.pid">
-            <td style="font-family:monospace">{{ p.pid }}</td>
-            <td>{{ p.name }}</td>
-            <td>{{ p.username }}</td>
-            <td>{{ p.memory_mb }} MB</td>
-            <td>{{ p.cpu_percent }}%</td>
-            <td>
-              <button class="btn-sm btn-danger" @click="killProcess(p.pid)">Kill</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="table-container">
+        <table style="margin-bottom: 0;">
+          <thead>
+            <tr>
+              <th class="sticky-th">PID</th>
+              <th class="sticky-th">Name</th>
+              <th class="sticky-th">User</th>
+              <th class="sticky-th">Memory</th>
+              <th class="sticky-th">CPU</th>
+              <th class="sticky-th">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="p in backgroundProcesses" :key="p.pid">
+              <td style="font-family:monospace">{{ p.pid }}</td>
+              <td>{{ p.name }}</td>
+              <td>{{ p.username }}</td>
+              <td>{{ p.memory_mb }} MB</td>
+              <td>{{ p.cpu_percent }}%</td>
+              <td>
+                <button class="btn-sm btn-danger" @click="killProcess(p.pid)">Kill</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- Performance Tab -->
@@ -648,7 +682,7 @@
       setup() {
         const tab = ref('automation')
         const summary = ref({ shares: 0, pins: 0 })
-        const stats = ref({ cpu_percent: 0, memory_percent: 0, memory_used: 0, memory_total: 0, disk_percent: 0, disk_free: 0, disk_total: 0, net_sent: 0, net_recv: 0, is_admin: false })
+        const stats = ref({ cpu_percent: 0, memory_percent: 0, memory_used: 0, memory_total: 0, disk_percent: 0, disk_free: 0, disk_total: 0, net_sent: 0, net_recv: 0, is_admin: false, server_pid: 0 })
         const netSpeed = ref({ sent: 0, recv: 0 })
 
         const shares = ref([])

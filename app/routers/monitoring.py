@@ -1,6 +1,7 @@
 import shutil
 import psutil
 import ctypes
+import os
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -17,6 +18,7 @@ class SystemStats(BaseModel):
     net_sent: int
     net_recv: int
     is_admin: bool
+    server_pid: int
 
 def is_user_admin():
     try:
@@ -70,7 +72,8 @@ def _monitor_loop():
                 disk_total=disk_data[0],
                 net_sent=net.bytes_sent,
                 net_recv=net.bytes_recv,
-                is_admin=is_user_admin()
+                is_admin=is_user_admin(),
+                server_pid=os.getpid()
             )
             
         except Exception as e:
@@ -95,7 +98,8 @@ def get_stats():
         return SystemStats(
             cpu_percent=0.0, memory_percent=0.0, memory_used=0, memory_total=0,
             disk_percent=0.0, disk_free=0, disk_total=0, net_sent=0, net_recv=0,
-            is_admin=is_user_admin()
+            is_admin=is_user_admin(),
+            server_pid=os.getpid()
         )
         
     return _LATEST_STATS
